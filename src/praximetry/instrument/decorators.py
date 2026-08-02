@@ -5,7 +5,7 @@ import functools
 import inspect
 from typing import Any, Callable, TypeVar, overload
 
-from ..runtime import STAGE_REGISTRY, stage_context
+from ..runtime import STAGE_REGISTRY, policy_scope, stage_context
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -40,7 +40,7 @@ def _wrap(fn: Callable[..., Any], stage_name: str) -> Any:
     if inspect.iscoroutinefunction(fn):
         @functools.wraps(fn)
         async def awrapper(*args: Any, **kwargs: Any) -> Any:
-            with stage_context(stage_name):
+            with stage_context(stage_name), policy_scope(stage_name):
                 return await fn(*args, **kwargs)
         awrapper.__praximetry_stage__ = stage_name  # type: ignore[attr-defined]
         STAGE_REGISTRY[stage_name] = awrapper
@@ -48,7 +48,7 @@ def _wrap(fn: Callable[..., Any], stage_name: str) -> Any:
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        with stage_context(stage_name):
+        with stage_context(stage_name), policy_scope(stage_name):
             return fn(*args, **kwargs)
 
     wrapper.__praximetry_stage__ = stage_name  # type: ignore[attr-defined]

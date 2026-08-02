@@ -4,7 +4,7 @@ from __future__ import annotations
 import contextvars
 import time
 from contextlib import contextmanager
-from typing import Any, Callable
+from typing import Any, Callable, ContextManager
 
 from .config import get_config
 from .models import Call, Run
@@ -20,6 +20,18 @@ _overrides: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextV
 
 # Stage function registry so eval/optimize can re-run stages by name.
 STAGE_REGISTRY: dict[str, Callable[..., Any]] = {}
+
+# praximetry has no local optimizer. This is the extension point external tooling
+# (praximetry-cloud's applied policy, or anything else) uses to make @stage-decorated
+# functions transparently pick up a computed policy in production, with no code
+# change. Unset by default: a no-op unless something registers a hook.
+_policy_hook: Callable[[str], ContextManager[None]] | None = None
+
+
+def set_policy_hook(fn: Callable[[str], ContextManager[None]] | None) -> None:
+    """Register (or clear, with None) the policy hook applied around every @stage call."""
+    global _policy_hook
+    _policy_hook = fn
 
 
 def current_run(create: bool = True) -> Run | None:
@@ -71,6 +83,16 @@ def override_context(model: str | None = None, prompt_transform=None):
         yield
     finally:
         _overrides.reset(token)
+
+
+@contextmanager
+def policy_scope(stage: str):
+    """Apply the registered policy hook for `stage`, if any (no-op otherwise)."""
+    if _policy_hook is None:
+        yield
+        return
+    with _policy_hook(stage):
+        yield
 
 
 def record_call(call: Call | None = None, **kwargs: Any) -> Call:
