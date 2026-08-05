@@ -1,7 +1,9 @@
 """Core: pricing, store, decorators, recording."""
+import asyncio
+
 import praximetry
 from praximetry import pricing
-from praximetry.runtime import STAGE_REGISTRY, record_call
+from praximetry.runtime import STAGE_REGISTRY, record_call, run_context
 from praximetry.store import get_store
 
 
@@ -49,3 +51,29 @@ def test_store_totals_and_summary():
     assert t["n"] == 3 and t["tin"] == 300 and abs(t["cost"] - 0.03) < 1e-9
     summary = get_store().stage_summary()
     assert summary[0]["stage"] == "s1" and summary[0]["n"] == 3
+
+
+def test_parent_call_id_chains_sequential_calls():
+    with run_context(name="seq"):
+        a = record_call(provider="fake", model="gpt-4o", stage="plan")
+        b = record_call(provider="fake", model="gpt-4o", stage="act")
+    assert a.parent_call_id is None
+    assert b.parent_call_id == a.id
+
+
+def test_parent_call_id_auto_links_concurrent_fanout():
+    async def sub_agent(name):
+        return record_call(provider="fake", model="gpt-4o", stage=name)
+
+    async def dispatch():
+        lead = record_call(provider="fake", model="gpt-4o", stage="dispatch")
+        a, b = await asyncio.gather(sub_agent("agent_a"), sub_agent("agent_b"))
+        return lead, a, b
+
+    with run_context(name="fanout"):
+        lead, a, b = asyncio.run(dispatch())
+
+    # asyncio.gather copies the context into each task, so both concurrent
+    # sub-calls independently inherit "dispatch" as their parent.
+    assert a.parent_call_id == lead.id
+    assert b.parent_call_id == lead.id

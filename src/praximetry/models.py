@@ -17,6 +17,7 @@ class Call(BaseModel):
 
     id: str = Field(default_factory=_id)
     run_id: str
+    parent_call_id: str | None = None
     stage: str | None = None
     provider: str = "unknown"
     model: str = "unknown"

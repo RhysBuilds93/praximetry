@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at REAL, ended_at REAL, experiment_id TEXT, metadata TEXT
 );
 CREATE TABLE IF NOT EXISTS calls (
-    id TEXT PRIMARY KEY, run_id TEXT, stage TEXT, provider TEXT, model TEXT,
+    id TEXT PRIMARY KEY, run_id TEXT, parent_call_id TEXT, stage TEXT, provider TEXT, model TEXT,
     messages TEXT, response_text TEXT,
     input_tokens INTEGER, output_tokens INTEGER, cost_usd REAL, latency_ms REAL,
     ts REAL, error TEXT, metadata TEXT
@@ -64,8 +64,8 @@ class Store:
     def save_call(self, call: Call) -> None:
         with self._conn() as c:
             c.execute(
-                "INSERT OR REPLACE INTO calls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (call.id, call.run_id, call.stage, call.provider, call.model,
+                "INSERT OR REPLACE INTO calls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (call.id, call.run_id, call.parent_call_id, call.stage, call.provider, call.model,
                  json.dumps(call.messages), call.response_text,
                  call.input_tokens, call.output_tokens, call.cost_usd, call.latency_ms,
                  call.ts, call.error, json.dumps(call.metadata)),

@@ -12,6 +12,11 @@ from .store import get_store
 
 _current_run: contextvars.ContextVar[Run | None] = contextvars.ContextVar("run", default=None)
 _current_stage: contextvars.ContextVar[str | None] = contextvars.ContextVar("stage", default=None)
+# The most recently recorded call in this context. asyncio.gather/create_task copy
+# the context into each spawned task, so concurrent fan-out calls all inherit the
+# same parent (whatever call was current just before the gather) automatically —
+# no API change needed in instrumented agent code.
+_current_call: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_call", default=None)
 # Experiment overrides applied in-flight by instrumentation:
 #   {"model": str | None, "prompt_transform": Callable[[list[dict]], list[dict]] | None}
 _overrides: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
@@ -59,9 +64,11 @@ def run_context(name: str | None = None, experiment_id: str | None = None):
     run = Run(project=cfg.project, name=name, experiment_id=experiment_id)
     get_store().save_run(run)
     token = _current_run.set(run)
+    call_token = _current_call.set(None)
     try:
         yield run
     finally:
+        _current_call.reset(call_token)
         run.ended_at = time.time()
         get_store().save_run(run)
         _current_run.reset(token)
@@ -102,6 +109,8 @@ def record_call(call: Call | None = None, **kwargs: Any) -> Call:
     if call is None:
         run = current_run()
         kwargs.setdefault("stage", current_stage())
+        kwargs.setdefault("parent_call_id", _current_call.get())
         call = Call(run_id=run.id, **kwargs)
     get_store().save_call(call)
+    _current_call.set(call.id)
     return call
