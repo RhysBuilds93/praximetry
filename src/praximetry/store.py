@@ -89,6 +89,18 @@ class Store:
             )
 
     # -- reads -------------------------------------------------------------
+    def runs(self, limit: int = 100) -> list[Run]:
+        rows = self._conn().execute(
+            "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [self._row_to_run(r) for r in rows]
+
+    @staticmethod
+    def _row_to_run(r: sqlite3.Row) -> Run:
+        d = dict(r)
+        d["metadata"] = json.loads(d["metadata"] or "{}")
+        return Run(**d)
+
     def calls(self, run_id: str | None = None, stage: str | None = None,
               limit: int = 1000) -> list[Call]:
         q, args = "SELECT * FROM calls", []

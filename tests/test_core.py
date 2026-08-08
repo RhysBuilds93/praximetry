@@ -53,6 +53,14 @@ def test_store_totals_and_summary():
     assert summary[0]["stage"] == "s1" and summary[0]["n"] == 3
 
 
+def test_store_runs_reader():
+    with run_context(name="triage") as run:
+        record_call(provider="fake", model="gpt-4o", stage="classify")
+    runs = get_store().runs(limit=1)
+    assert runs[0].id == run.id
+    assert runs[0].name == "triage"
+
+
 def test_parent_call_id_chains_sequential_calls():
     with run_context(name="seq"):
         a = record_call(provider="fake", model="gpt-4o", stage="plan")
