@@ -45,9 +45,10 @@ function.
 ## What this is (and isn't)
 
 This package is the open-source recording/observability layer: instrumentation,
-local storage, cost calculation. Evaluation, auto-optimization, and the hosted
-dashboard are a separate product — see
-[praximetry.io](https://praximetry.io).
+local storage, cost calculation, and the `praximetry eval` CI-gate command
+(which only captures request shapes — it never scores or judges anything
+locally). Auto-optimization and the hosted dashboard are a separate product —
+see [praximetry.io](https://praximetry.io).
 
 ## License
 
