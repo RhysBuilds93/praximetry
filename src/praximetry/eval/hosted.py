@@ -66,19 +66,80 @@ class CloudClient:
             raise CloudError(f"{resp.request.method} {resp.request.url} -> {resp.status_code}: {resp.text}")
         return resp
 
-    def fetch_corpus(self, stage: str | None = None) -> Dataset:
-        params = {"stage": stage} if stage else {}
+    def fetch_corpus(
+        self, stage: str | None = None, source: str | None = None, project: str | None = None
+    ) -> Dataset:
+        params = {}
+        if stage:
+            params["stage"] = stage
+        if source:
+            params["source"] = source
+        if project:
+            params["project"] = project
         resp = self._check(self._client.get(self._url("/api/eval/corpus"),
                                             params=params, headers=self._headers))
         return Dataset(examples=[Example(**d) for d in resp.json()],
                        path=f"{self.base_url}/api/eval/corpus")
 
-    def push_captures(self, stage: str, captures: list[CapturedRequest]) -> dict:
+    def push_captures(
+        self, stage: str, captures: list[CapturedRequest], experiment_id: str | None = None
+    ) -> dict:
         """POST captured request shapes to /api/eval/captures. The cloud scores
-        them synchronously — the response already carries quality/pass_rate/cost."""
+        them synchronously — the response already carries quality/pass_rate/cost.
+
+        `experiment_id` groups multiple pushes (e.g. one per stage in a
+        `--project` run) into a single batch that `fetch_results` can look
+        back up. The server generates one if omitted, but a caller pushing
+        several stages under one run must supply the same id on every call."""
+        body: dict = {"stage": stage, "captures": [c.model_dump() for c in captures]}
+        if experiment_id:
+            body["experiment_id"] = experiment_id
         resp = self._check(self._client.post(
-            self._url("/api/eval/captures"),
-            json={"stage": stage, "captures": [c.model_dump() for c in captures]},
+            self._url("/api/eval/captures"), json=body, headers=self._headers,
+        ))
+        return resp.json()
+
+    def fetch_results(
+        self,
+        stage: str | None = None,
+        project: str | None = None,
+        experiment_id: str | None = None,
+    ) -> dict:
+        """GET /api/eval/results — exactly one of `stage`/`project` is required
+        (checked client-side so misuse fails fast rather than round-tripping for
+        a 400). `experiment_id` defaults server-side to the most recent scored
+        batch for that scope when omitted."""
+        if not stage and not project:
+            raise CloudError("fetch_results requires stage or project")
+        params: dict[str, str] = {}
+        if stage:
+            params["stage"] = stage
+        if project:
+            params["project"] = project
+        if experiment_id:
+            params["experiment_id"] = experiment_id
+        resp = self._check(self._client.get(
+            self._url("/api/eval/results"), params=params, headers=self._headers,
+        ))
+        return resp.json()
+
+    def fetch_eval_config(self, project: str, stage: str | None = None) -> dict:
+        """GET /api/eval/config — the effective --fail-under default (stage
+        override if one was saved, else the project default, else 0.8)."""
+        params = {"project": project}
+        if stage:
+            params["stage"] = stage
+        resp = self._check(self._client.get(
+            self._url("/api/eval/config"), params=params, headers=self._headers,
+        ))
+        return resp.json()
+
+    def save_eval_config(self, project: str, fail_under: float, stage: str | None = None) -> dict:
+        """POST /api/eval/config — saves a project default (stage omitted) or a
+        per-stage override."""
+        resp = self._check(self._client.post(
+            self._url("/api/eval/config"),
+            json={"project": project, "stage": stage, "fail_under": fail_under},
             headers=self._headers,
         ))
         return resp.json()

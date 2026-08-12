@@ -34,13 +34,17 @@ def _import_module(module: str | None) -> None:
 
 @app.command("eval")
 def eval_cmd(
-    stage: str = typer.Option(..., "--stage", help="Stage whose hosted corpus to evaluate"),
+    stage: str = typer.Option(None, "--stage", help="Stage whose hosted corpus to evaluate"),
+    project: str = typer.Option(None, "--project",
+                                 help="Project whose hosted corpus to evaluate (every stage under it)"),
     module: str = typer.Option(None, "--module", "-m",
                                 help="Python module defining your @praximetry.stage functions"),
-    fail_under: float = typer.Option(0.9, "--fail-under",
-                                      help="Exit non-zero if aggregate quality falls below this"),
+    fail_under: float = typer.Option(None, "--fail-under",
+                                      help="Exit non-zero if aggregate quality falls below this "
+                                           "(default: the hosted project/stage config, or 0.9 "
+                                           "for plain --stage runs)"),
 ) -> None:
-    """CI gate: capture this stage's hosted golden corpus and have the cloud score it.
+    """CI gate: capture the hosted golden corpus and have the cloud score it.
 
     Pulls the corpus from the hosted API, runs each example's real registered
     stage code in *this* process just far enough to capture the request shape
@@ -49,41 +53,85 @@ def eval_cmd(
     Exit 0 = passed, 1 = below --fail-under, 2 = the gate could not run (no
     key, empty corpus, nothing capturable, or the API call failed).
 
+    At least one of --stage/--project is required. --stage alone evaluates
+    just that stage. --project alone evaluates every stage under that project
+    and gates on the aggregate (unweighted mean of each stage's quality).
+    --stage and --project together narrows to one stage within a project.
+
     Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (default localhost).
     """
+    import uuid
+
     from .eval import CaptureError, capture_request
     from .eval.hosted import EXIT_GATE_FAILED, EXIT_OK, EXIT_UNUSABLE, CloudError, client_from_env
+
+    if not stage and not project:
+        typer.echo("error: at least one of --stage/--project is required")
+        raise typer.Exit(EXIT_UNUSABLE)
 
     try:
         client = client_from_env()
         _import_module(module)
-        dataset = client.fetch_corpus(stage)
+        dataset = client.fetch_corpus(stage=stage, project=project)
+        scope = f"project '{project}'" if not stage else (
+            f"stage '{stage}' in project '{project}'" if project else f"stage '{stage}'"
+        )
         if not dataset.examples:
-            typer.echo(f"No golden examples for stage '{stage}'.")
+            typer.echo(f"No golden examples for {scope}.")
             raise typer.Exit(EXIT_UNUSABLE)
 
-        captures = []
+        experiment_id = str(uuid.uuid4())
+        captures_by_stage: dict[str, list] = {}
         for ex in dataset.examples:
             try:
-                captures.append(capture_request(ex))
+                captures_by_stage.setdefault(ex.stage, []).append(capture_request(ex))
             except CaptureError as e:
                 typer.echo(f"  [SKIP] {ex.stage}/{ex.id}: {e}")
-        if not captures:
+        if not any(captures_by_stage.values()):
             typer.echo("No captures produced — nothing to evaluate.")
             raise typer.Exit(EXIT_UNUSABLE)
 
-        result = client.push_captures(stage, captures)
+        push_results: dict[str, dict] = {}
+        for stage_name, caps in captures_by_stage.items():
+            push_results[stage_name] = client.push_captures(
+                stage_name, caps, experiment_id=experiment_id
+            )
+            if project and not stage and push_results[stage_name].get("skipped"):
+                typer.echo(
+                    f"skipped (no matching golden example) in {stage_name}: "
+                    f"{', '.join(push_results[stage_name]['skipped'])}"
+                )
+
+        if project and not stage:
+            # Multi-stage run: gate on the aggregate across the whole project.
+            results = client.fetch_results(project=project, experiment_id=experiment_id)
+            for stage_name, stage_result in results["stages"].items():
+                typer.echo(
+                    f"  {stage_name}: quality={stage_result['quality']:.2f} "
+                    f"examples={stage_result['count']}"
+                )
+            quality = results["aggregate_quality"]
+            if fail_under is None:
+                fail_under = client.fetch_eval_config(project=project)["fail_under"]
+            typer.echo(f"aggregate quality={quality:.2f}")
+        else:
+            # Single-stage run (with or without --project narrowing it).
+            result = push_results[stage]
+            quality, pass_rate = result["quality"], result["pass_rate"]
+            typer.echo(
+                f"quality={quality:.2f} pass_rate={pass_rate:.0%} cost=${result['cost_usd']:.4f} "
+                f"examples={result['count']}"
+            )
+            if result.get("skipped"):
+                typer.echo(f"skipped (no matching golden example): {', '.join(result['skipped'])}")
+            if fail_under is None:
+                fail_under = (
+                    client.fetch_eval_config(project=project, stage=stage)["fail_under"]
+                    if project else 0.9
+                )
     except CloudError as e:
         typer.echo(f"error: {e}")
         raise typer.Exit(EXIT_UNUSABLE) from e
-
-    quality, pass_rate = result["quality"], result["pass_rate"]
-    typer.echo(
-        f"quality={quality:.2f} pass_rate={pass_rate:.0%} cost=${result['cost_usd']:.4f} "
-        f"examples={result['count']}"
-    )
-    if result.get("skipped"):
-        typer.echo(f"skipped (no matching golden example): {', '.join(result['skipped'])}")
 
     if quality < fail_under:
         typer.echo(f"FAIL: quality {quality:.3f} < --fail-under {fail_under:.3f}")
