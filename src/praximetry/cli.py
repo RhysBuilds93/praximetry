@@ -93,6 +93,136 @@ def eval_cmd(
 
 
 @app.command()
+def optimize(
+    stage: str = typer.Option(..., "--stage", help="Stage to trigger a hosted optimization run for"),
+    module: str = typer.Option(None, "--module", "-m",
+                                help="Python module defining your @praximetry.stage functions"),
+    model: list[str] = typer.Option(None, "--model",
+                                     help="Candidate model(s) to trial (repeatable)"),
+    transform: list[str] = typer.Option(None, "--transform",
+                                         help="Candidate prompt transform(s) to trial (repeatable)"),
+    quality_tolerance: float = typer.Option(0.02, "--quality-tolerance",
+                                             help="Max quality drop from baseline still considered a win"),
+    max_trials: int = typer.Option(8, "--max-trials", help="Trial budget for the hosted run"),
+) -> None:
+    """Trigger a hosted optimization run for `stage`.
+
+    Captures one fresh request shape for `stage` from *this* process's
+    registered code (same capture step `eval` uses, no real LLM call happens
+    here) and submits it to the cloud, which runs the actual trial loop
+    (transforms, candidate models, scoring) with its own credentials. Exit 0
+    on a successful submission, non-zero if the gate couldn't run (no key,
+    API unreachable, empty corpus, nothing capturable).
+
+    Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (default localhost).
+    """
+    from .eval import CaptureError, capture_request
+    from .eval.hosted import CloudError, client_from_env
+
+    try:
+        client = client_from_env()
+        _import_module(module)
+        dataset = client.fetch_corpus(stage)
+        if not dataset.examples:
+            typer.echo(f"No golden examples for stage '{stage}'.")
+            raise typer.Exit(1)
+
+        try:
+            captured = capture_request(dataset.examples[0])
+        except CaptureError as e:
+            typer.echo(f"error: {e}")
+            raise typer.Exit(1) from e
+
+        result = client.push_optimize_capture(
+            stage,
+            captured,
+            candidate_models=model or (),
+            transforms=transform or (),
+            quality_tolerance=quality_tolerance,
+            max_trials=max_trials,
+        )
+    except CloudError as e:
+        typer.echo(f"error: {e}")
+        raise typer.Exit(1) from e
+
+    winner = result.get("winner")
+    typer.echo(f"stage={result.get('stage', stage)} examples={result.get('examples', result.get('count', '?'))}")
+    if winner:
+        savings = result.get("savings_pct")
+        savings_str = f" savings={savings:.0%}" if savings is not None else ""
+        typer.echo(f"winner found: {winner}{savings_str}")
+    else:
+        typer.echo("no winner found (nothing beat baseline within tolerance)")
+    if result.get("truncated"):
+        typer.echo("warning: run was truncated (max_trials reached)")
+    if result.get("errors"):
+        typer.echo(f"errors: {result['errors']}")
+    raise typer.Exit(0)
+
+
+@app.command()
+def apply(
+    stage: str = typer.Option(..., "--stage", help="Stage to apply the hosted optimize winner for"),
+) -> None:
+    """Fetch the winning policy from a completed `optimize` run and write it
+    locally to .praximetry/overrides.json.
+
+    No capture, no optimization logic — just fetch-and-write. Exit codes:
+    0 = applied, or ran fine and there was nothing to apply (no candidate beat
+    baseline); 1 = no completed optimize run exists yet for this stage; 2 =
+    the gate could not run at all (no key, API unreachable).
+
+    Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (default localhost).
+    """
+    import json
+    import time
+    from pathlib import Path
+
+    from .eval.hosted import CloudError, client_from_env
+
+    try:
+        client = client_from_env()
+        winner = client.fetch_winner(stage)
+    except CloudError as e:
+        typer.echo(f"error: {e}")
+        raise typer.Exit(2) from e
+
+    if winner is None:
+        typer.echo(
+            f"no optimize run found for stage '{stage}' — run "
+            f"`praximetry optimize --stage {stage} -m your_module` first"
+        )
+        raise typer.Exit(1)
+
+    if not winner.get("model") and not winner.get("transforms"):
+        typer.echo(f"optimize run for stage '{stage}' completed but found no winner — nothing to apply.")
+        raise typer.Exit(0)
+
+    path = Path(".praximetry") / "overrides.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stages: dict = {}
+    if path.exists():
+        try:
+            stages = json.loads(path.read_text()).get("stages", {})
+        except (json.JSONDecodeError, OSError):
+            stages = {}
+    stages[stage] = {
+        "model": winner.get("model"),
+        "transforms": winner.get("transforms") or [],
+        "experiment_id": winner.get("experiment_id"),
+        "savings_pct": winner.get("savings_pct"),
+        "applied_at": time.time(),
+    }
+    path.write_text(json.dumps({"stages": stages}, indent=2))
+
+    savings = winner.get("savings_pct")
+    savings_str = f" savings={savings:.0%}" if savings is not None else ""
+    typer.echo(f"applied stage='{stage}' model={winner.get('model')} "
+               f"transforms={winner.get('transforms') or []}{savings_str} -> {path}")
+    raise typer.Exit(0)
+
+
+@app.command()
 def summary() -> None:
     """Print usage totals and per-stage breakdown."""
     from .store import get_store

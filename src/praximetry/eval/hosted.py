@@ -83,6 +83,43 @@ class CloudClient:
         ))
         return resp.json()
 
+    def push_optimize_capture(
+        self,
+        stage: str,
+        captured_request: CapturedRequest,
+        candidate_models: tuple[str, ...] | list[str] = (),
+        transforms: tuple[str, ...] | list[str] = (),
+        quality_tolerance: float = 0.02,
+        max_trials: int = 8,
+    ) -> dict:
+        """POST a captured request shape to /api/optimize/captures to trigger a
+        hosted optimization run. All trial logic (transforms, candidate selection,
+        the trial loop itself) is server-side — this just submits what to optimize."""
+        resp = self._check(self._client.post(
+            self._url("/api/optimize/captures"),
+            json={
+                "stage": stage,
+                "captured_request": captured_request.model_dump(),
+                "candidate_models": list(candidate_models),
+                "transforms": list(transforms),
+                "quality_tolerance": quality_tolerance,
+                "max_trials": max_trials,
+            },
+            headers=self._headers,
+        ))
+        return resp.json()
+
+    def fetch_winner(self, stage: str) -> dict | None:
+        """GET /api/optimize/winner?stage=X — the winning policy from the most
+        recently completed optimize run for this stage. Returns None if no
+        completed run exists at all (404); raises CloudError on other errors."""
+        resp = self._client.get(
+            self._url("/api/optimize/winner"), params={"stage": stage}, headers=self._headers
+        )
+        if resp.status_code == 404:
+            return None
+        return self._check(resp).json()
+
     def push_trace(self, run: Run, calls: list[Call]) -> dict:
         resp = self._check(self._client.post(
             self._url("/api/traces"),
