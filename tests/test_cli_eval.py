@@ -4,7 +4,6 @@ Corpus fetch and capture push go through a small stub FastAPI app (the real
 hosted server lives in the closed-source cloud repo and does real scoring —
 out of scope here). This proves the CLI's capture -> push -> gate wiring.
 """
-import pytest
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
