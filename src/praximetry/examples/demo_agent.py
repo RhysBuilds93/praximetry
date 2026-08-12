@@ -2,7 +2,7 @@
 
 Runs fully offline (simulated LLM) so you can explore recorded traffic without keys:
 
-    python examples/demo_agent.py     # generates traffic into .praximetry/
+    python -m praximetry.examples.demo_agent     # generates traffic into .praximetry/
     praximetry summary
 """
 import json

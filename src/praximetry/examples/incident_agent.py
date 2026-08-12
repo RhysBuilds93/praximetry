@@ -21,7 +21,7 @@ all of which fall out of `Call.parent_call_id` automatically:
 
 Runs fully offline (simulated LLM), like demo_agent.py:
 
-    python examples/incident_agent.py     # generates traffic into .praximetry/
+    python -m praximetry.examples.incident_agent     # generates traffic into .praximetry/
     praximetry summary
 """
 import asyncio
