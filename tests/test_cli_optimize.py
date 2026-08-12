@@ -6,7 +6,6 @@ fetch -> write-overrides wiring for `apply`.
 """
 import json
 
-import pytest
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
