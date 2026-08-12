@@ -42,6 +42,19 @@ class Store:
         self._local = threading.local()
         with self._conn() as c:
             c.executescript(_SCHEMA)
+            self._migrate(c)
+
+    @staticmethod
+    def _migrate(c: sqlite3.Connection) -> None:
+        """`CREATE TABLE IF NOT EXISTS` is a no-op against a pre-existing table, so a
+        `calls` table created before `parent_call_id` was added stays 14 columns
+        forever — not just missing the field, but silently breaking `save_call`'s
+        positional INSERT (14 columns, 15 values) the moment it's ever called against
+        that file. Patch it up here rather than assume every `.praximetry/*.db` on
+        disk was created after this column existed."""
+        cols = {row[1] for row in c.execute("PRAGMA table_info(calls)").fetchall()}
+        if "parent_call_id" not in cols:
+            c.execute("ALTER TABLE calls ADD COLUMN parent_call_id TEXT")
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
@@ -64,7 +77,10 @@ class Store:
     def save_call(self, call: Call) -> None:
         with self._conn() as c:
             c.execute(
-                "INSERT OR REPLACE INTO calls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                """INSERT OR REPLACE INTO calls
+                   (id, run_id, parent_call_id, stage, provider, model, messages, response_text,
+                    input_tokens, output_tokens, cost_usd, latency_ms, ts, error, metadata)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (call.id, call.run_id, call.parent_call_id, call.stage, call.provider, call.model,
                  json.dumps(call.messages), call.response_text,
                  call.input_tokens, call.output_tokens, call.cost_usd, call.latency_ms,
