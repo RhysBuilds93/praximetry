@@ -1,10 +1,10 @@
 """praximetry — drop-in observability for LLM agents.
 
 Quickstart:
-    import praximetry
-    praximetry.init(project="my-agent")   # auto-instruments openai/anthropic SDKs
+    import praximetry as px
+    px.init(project="my-agent")   # auto-instruments openai/anthropic SDKs
 
-    @praximetry.stage("summarize")
+    @px.stage("summarize")
     def summarize(text): ...
 
     # then:  praximetry summary
