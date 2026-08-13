@@ -6,6 +6,7 @@ import time
 from contextlib import contextmanager
 from typing import Any, Callable, ContextManager
 
+from . import cloud_sync
 from .config import get_config
 from .models import Call, Run
 from .store import get_store
@@ -46,6 +47,7 @@ def current_run(create: bool = True) -> Run | None:
         run = Run(project=cfg.project)
         _current_run.set(run)
         get_store().save_run(run)
+        cloud_sync.note_run(run)
     return run
 
 
@@ -63,6 +65,7 @@ def run_context(name: str | None = None, experiment_id: str | None = None):
     cfg = get_config()
     run = Run(project=cfg.project, name=name, experiment_id=experiment_id)
     get_store().save_run(run)
+    cloud_sync.note_run(run)
     token = _current_run.set(run)
     call_token = _current_call.set(None)
     try:
@@ -71,6 +74,7 @@ def run_context(name: str | None = None, experiment_id: str | None = None):
         _current_call.reset(call_token)
         run.ended_at = time.time()
         get_store().save_run(run)
+        cloud_sync.note_run(run)
         _current_run.reset(token)
 
 
@@ -112,5 +116,7 @@ def record_call(call: Call | None = None, **kwargs: Any) -> Call:
         kwargs.setdefault("parent_call_id", _current_call.get())
         call = Call(run_id=run.id, **kwargs)
     get_store().save_call(call)
+    if cloud_sync.is_running():
+        cloud_sync.enqueue(call)
     _current_call.set(call.id)
     return call
