@@ -12,7 +12,14 @@ from .models import Call, Run
 from .store import get_store
 
 _current_run: contextvars.ContextVar[Run | None] = contextvars.ContextVar("run", default=None)
-_current_stage: contextvars.ContextVar[str | None] = contextvars.ContextVar("stage", default=None)
+# Stack of active stage names, outermost first, so a nested @stage call (e.g.
+# "summarize" calling "extract") records the full path ("summarize>extract")
+# rather than losing the outer stage. A plain contextvar can't be mutated in
+# place across nested `with` blocks, so each push sets a new tuple and the
+# matching pop resets via the returned token.
+_stage_stack: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
+    "stage_stack", default=()
+)
 # The most recently recorded call in this context. asyncio.gather/create_task copy
 # the context into each spawned task, so concurrent fan-out calls all inherit the
 # same parent (whatever call was current just before the gather) automatically —
@@ -52,7 +59,8 @@ def current_run(create: bool = True) -> Run | None:
 
 
 def current_stage() -> str | None:
-    return _current_stage.get()
+    stack = _stage_stack.get()
+    return ">".join(stack) if stack else None
 
 
 def get_overrides() -> dict[str, Any] | None:
@@ -80,11 +88,11 @@ def run_context(name: str | None = None, experiment_id: str | None = None):
 
 @contextmanager
 def stage_context(name: str):
-    token = _current_stage.set(name)
+    token = _stage_stack.set(_stage_stack.get() + (name,))
     try:
         yield
     finally:
-        _current_stage.reset(token)
+        _stage_stack.reset(token)
 
 
 @contextmanager
