@@ -1,6 +1,6 @@
 import pytest
 
-from praximetry import config, pricing, runtime
+from praximetry import cloud_sync, config, pricing, runtime
 from praximetry.store import reset_store
 
 
@@ -10,13 +10,20 @@ def fresh_env(tmp_path, monkeypatch):
 
     PRAXIMETRY_DB is also set via env so example modules that call praximetry.init()
     at import time (rebuilding config from env) stay inside the tmp sandbox.
+
+    cloud_sync is reset both before and after so no background worker thread
+    (or stale client/redaction hook/run cache) leaks between tests — most
+    tests never set PRAXIMETRY_API_KEY so this is a no-op for them.
     """
+    monkeypatch.delenv("PRAXIMETRY_API_KEY", raising=False)
     monkeypatch.setenv("PRAXIMETRY_DB", str(tmp_path / "test.db"))
     cfg = config.Config(project="test", db_path=tmp_path / "test.db")
     config.set_config(cfg)
     reset_store()
     runtime.STAGE_REGISTRY.clear()
+    cloud_sync.reset()
     yield
+    cloud_sync.reset()
     reset_store()
 
 
