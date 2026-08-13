@@ -220,3 +220,9 @@ __marimo__/
 # praximetry local data
 .praximetry/
 *.db
+
+# graphify local/machine-specific state (outputs are committed)
+graphify-out/.graphify_python
+graphify-out/.graphify_root
+graphify-out/cache/
+graphify-out/cost.json
