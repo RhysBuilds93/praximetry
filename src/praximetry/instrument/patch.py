@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from .. import pricing
 from ..runtime import get_overrides, record_call
-from . import extractors as ex
+from .providers import PROVIDERS, ProviderSpec
 from .wrap import AsyncStreamWrapper, SyncStreamWrapper
 
 _patched: set[str] = set()
@@ -20,11 +20,10 @@ _patched: set[str] = set()
 def auto_instrument() -> list[str]:
     """Patch whichever supported SDKs are importable. Returns providers patched."""
     done = []
-    for name, fn in (("openai", _patch_openai), ("anthropic", _patch_anthropic),
-                     ("litellm", _patch_litellm), ("gemini", _patch_gemini)):
+    for spec in PROVIDERS:
         try:
-            if fn():
-                done.append(name)
+            if _patch(spec):
+                done.append(spec.name)
         except Exception:  # a broken/renamed SDK internal must not crash init()
             pass
     return done
@@ -107,87 +106,55 @@ def _instrument(original: Callable, provider: str, get_messages, response_extrac
     return create
 
 
-def _patch_openai() -> bool:
-    if "openai" in _patched:
+def _self_less(orig: Callable) -> Callable:
+    """Wrap a module-level function (no `self`) so `_instrument()` can treat
+    it like a class method. Matches the technique litellm.completion/
+    acompletion need since they have no bound receiver."""
+    def with_self(_self: Any, *a: Any, **k: Any) -> Any:
+        return orig(*a, **k)
+    return with_self
+
+
+def _self_less_caller(inst: Callable, is_async: bool) -> Callable:
+    """Strip the `self` arg back off before calling an `_instrument()`-built
+    wrapper, so callers of the module-level function see its original
+    (self-less) signature again."""
+    if is_async:
+        async def acall(*a: Any, **k: Any) -> Any:
+            return await inst(None, *a, **k)
+        return acall
+
+    def call(*a: Any, **k: Any) -> Any:
+        return inst(None, *a, **k)
+    return call
+
+
+def _patch(spec: ProviderSpec) -> bool:
+    """Apply one provider's PatchTarget table, generically."""
+    if spec.name in _patched:
         return True
     try:
-        from openai.resources.chat.completions import AsyncCompletions, Completions
-    except ImportError:
-        return False
-    Completions.create = _instrument(  # type: ignore[method-assign]
-        Completions.create, "openai", ex.openai_messages, ex.openai_response,
-        ex.openai_accumulate, is_async=False)
-    AsyncCompletions.create = _instrument(  # type: ignore[method-assign]
-        AsyncCompletions.create, "openai", ex.openai_messages, ex.openai_response,
-        ex.openai_accumulate, is_async=True)
-    _patched.add("openai")
-    return True
-
-
-def _patch_anthropic() -> bool:
-    if "anthropic" in _patched:
-        return True
-    try:
-        from anthropic.resources.messages import AsyncMessages, Messages
-    except ImportError:
-        return False
-    Messages.create = _instrument(  # type: ignore[method-assign]
-        Messages.create, "anthropic", ex.anthropic_messages, ex.anthropic_response,
-        ex.anthropic_accumulate, is_async=False)
-    AsyncMessages.create = _instrument(  # type: ignore[method-assign]
-        AsyncMessages.create, "anthropic", ex.anthropic_messages, ex.anthropic_response,
-        ex.anthropic_accumulate, is_async=True)
-    _patched.add("anthropic")
-    return True
-
-
-def _patch_litellm() -> bool:
-    """LiteLLM exposes module-level completion()/acompletion() with OpenAI shapes."""
-    if "litellm" in _patched:
-        return True
-    try:
-        import litellm
+        sync_host, async_host = spec.owner()
     except ImportError:
         return False
 
-    def wrap(orig: Callable, is_async: bool) -> Callable:
-        inst = _instrument(lambda _self, *a, **k: orig(*a, **k), "litellm",
-                           ex.openai_messages, ex.openai_response, ex.openai_accumulate,
-                           is_async=is_async)
-        if is_async:
-            async def acall(*a: Any, **k: Any) -> Any:
-                return await inst(None, *a, **k)
-            return acall
+    for target in spec.targets:
+        host = async_host if target.is_async else sync_host
+        if target.optional and not hasattr(host, target.attr):
+            continue
+        original = getattr(host, target.attr)
+        if target.self_less:
+            inst = _instrument(
+                _self_less(original), spec.name, spec.get_messages, spec.response_extract,
+                spec.accumulate, is_async=target.is_async, messages_key=spec.messages_key,
+                force_stream=target.force_stream)
+            setattr(host, target.attr, _self_less_caller(inst, target.is_async))
+        else:
+            new = _instrument(
+                original, spec.name, spec.get_messages, spec.response_extract,
+                spec.accumulate, is_async=target.is_async, messages_key=spec.messages_key,
+                force_stream=target.force_stream)
+            setattr(host, target.attr, new)  # type: ignore[method-assign]
 
-        def call(*a: Any, **k: Any) -> Any:
-            return inst(None, *a, **k)
-        return call
-
-    litellm.completion = wrap(litellm.completion, is_async=False)
-    if hasattr(litellm, "acompletion"):
-        litellm.acompletion = wrap(litellm.acompletion, is_async=True)
-    _patched.add("litellm")
-    return True
-
-
-def _patch_gemini() -> bool:
-    """google-genai: Models.generate_content(+_stream) and async equivalents."""
-    if "gemini" in _patched:
-        return True
-    try:
-        from google.genai.models import AsyncModels, Models
-    except ImportError:
-        return False
-
-    def inst(orig, is_async, force_stream=False):
-        return _instrument(orig, "gemini", ex.gemini_messages, ex.gemini_response,
-                           ex.gemini_accumulate, is_async=is_async,
-                           messages_key="contents", force_stream=force_stream)
-
-    Models.generate_content = inst(Models.generate_content, False)  # type: ignore[method-assign]
-    AsyncModels.generate_content = inst(AsyncModels.generate_content, True)  # type: ignore[method-assign]
-    if hasattr(Models, "generate_content_stream"):
-        Models.generate_content_stream = inst(  # type: ignore[method-assign]
-            Models.generate_content_stream, False, force_stream=True)
-    _patched.add("gemini")
+    _patched.add(spec.name)
     return True

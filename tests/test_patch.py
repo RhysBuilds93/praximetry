@@ -5,7 +5,12 @@ from types import SimpleNamespace as NS
 
 from praximetry.instrument import extractors as ex
 from praximetry.instrument import patch as P
+from praximetry.instrument.providers import PROVIDERS
 from praximetry.store import get_store
+
+
+def test_providers_cover_all_four():
+    assert {spec.name for spec in PROVIDERS} == {"openai", "anthropic", "litellm", "gemini"}
 
 
 # -- extractors against REAL SDK response objects ---------------------------
