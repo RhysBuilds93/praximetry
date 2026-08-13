@@ -126,10 +126,14 @@ class Store:
             )
 
     # -- reads -------------------------------------------------------------
-    def runs(self, limit: int = 100) -> list[Run]:
-        rows = self._conn().execute(
-            "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+    def runs(self, project: str | None = None, limit: int = 100) -> list[Run]:
+        q, args = "SELECT * FROM runs", []
+        if project:
+            q += " WHERE project=?"
+            args.append(project)
+        q += " ORDER BY started_at DESC LIMIT ?"
+        args.append(limit)
+        rows = self._conn().execute(q, args).fetchall()
         return [self._row_to_run(r) for r in rows]
 
     @staticmethod
@@ -139,18 +143,25 @@ class Store:
         return Run(**d)
 
     def calls(self, run_id: str | None = None, stage: str | None = None,
-              limit: int = 1000) -> list[Call]:
-        q, args = "SELECT * FROM calls", []
+              project: str | None = None, limit: int = 1000) -> list[Call]:
+        # `project` lives on runs, not calls, so filtering by it needs a join —
+        # keep that join out of the common case (SELECT calls.* avoids column
+        # collisions either way, but the plain query stays index-friendly).
+        q, args = "SELECT calls.* FROM calls", []
         conds = []
+        if project:
+            q += " JOIN runs ON calls.run_id = runs.id"
+            conds.append("runs.project=?")
+            args.append(project)
         if run_id:
-            conds.append("run_id=?")
+            conds.append("calls.run_id=?")
             args.append(run_id)
         if stage:
-            conds.append("stage=?")
+            conds.append("calls.stage=?")
             args.append(stage)
         if conds:
             q += " WHERE " + " AND ".join(conds)
-        q += " ORDER BY ts DESC LIMIT ?"
+        q += " ORDER BY calls.ts DESC LIMIT ?"
         args.append(limit)
         rows = self._conn().execute(q, args).fetchall()
         return [self._row_to_call(r) for r in rows]
