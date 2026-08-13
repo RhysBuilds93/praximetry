@@ -27,10 +27,10 @@ Runs fully offline (simulated LLM), like demo_agent.py:
 import asyncio
 import random
 
-import praximetry
+import praximetry as px
 from praximetry import pricing
 
-praximetry.init(project="incident-responder")
+px.init(project="incident-responder")
 
 SYSTEM = "You are an on-call incident response agent. Be precise and cite signals. " * 6
 
@@ -54,7 +54,7 @@ def _sim_llm(model: str, messages: list[dict], answer: str) -> str:
     """Offline stand-in for a chat API. Records the call, returns `answer`."""
     tin = sum(len(str(m.get("content", ""))) // 4 for m in messages)
     tout = max(len(answer) // 4, 1) + random.randint(2, 9)
-    praximetry.record_call(
+    px.record_call(
         provider="sim", model=model, messages=messages, response_text=answer,
         input_tokens=tin, output_tokens=tout,
         cost_usd=pricing.cost_usd(model, tin, tout),
@@ -71,7 +71,7 @@ def _categorize(incident: str) -> str:
 
 # -- branch point --------------------------------------------------------------
 
-@praximetry.stage("triage")
+@px.stage("triage")
 def triage(incident: str) -> str:
     """Pick the category. Downstream stages genuinely differ per category."""
     category = _categorize(incident)
@@ -85,7 +85,7 @@ def triage(incident: str) -> str:
 
 # -- concurrent fan-out --------------------------------------------------------
 
-@praximetry.stage("fetch_logs")
+@px.stage("fetch_logs")
 async def fetch_logs(incident: str) -> str:
     await asyncio.sleep(0)  # yield, so the siblings genuinely interleave
     return _sim_llm(
@@ -95,7 +95,7 @@ async def fetch_logs(incident: str) -> str:
     )
 
 
-@praximetry.stage("fetch_metrics")
+@px.stage("fetch_metrics")
 async def fetch_metrics(incident: str) -> str:
     await asyncio.sleep(0)
     return _sim_llm(
@@ -105,7 +105,7 @@ async def fetch_metrics(incident: str) -> str:
     )
 
 
-@praximetry.stage("fetch_alerts")
+@px.stage("fetch_alerts")
 async def fetch_alerts(incident: str) -> str:
     await asyncio.sleep(0)
     return _sim_llm(
@@ -115,7 +115,7 @@ async def fetch_alerts(incident: str) -> str:
     )
 
 
-@praximetry.stage("gather_signals")
+@px.stage("gather_signals")
 async def gather_signals(incident: str, category: str) -> list[str]:
     """Fan out over the signal sources this category needs.
 
@@ -132,7 +132,7 @@ async def gather_signals(incident: str, category: str) -> list[str]:
     return list(await asyncio.gather(*(fetchers[s](incident) for s in sources)))
 
 
-@praximetry.stage("correlate")
+@px.stage("correlate")
 def correlate(incident: str, signals: list[str]) -> str:
     """Join stage: consumes the combined result of the concurrent branches."""
     # A "clear" cause is one where the metrics and logs agree; security
@@ -150,7 +150,7 @@ def correlate(incident: str, signals: list[str]) -> str:
 # -- the three branch destinations ---------------------------------------------
 
 def _playbook(stage_name: str, steps: str):
-    @praximetry.stage(stage_name)
+    @px.stage(stage_name)
     def run_playbook(incident: str, correlation: str) -> str:
         return _sim_llm(
             "claude-sonnet-5",
@@ -170,7 +170,7 @@ PLAYBOOK_FNS = {"database": db_playbook, "network": network_playbook, "security"
 
 # -- retry loop ----------------------------------------------------------------
 
-@praximetry.stage("draft_postmortem")
+@px.stage("draft_postmortem")
 def draft_postmortem(incident: str, correlation: str, remediation: str, feedback: str) -> str:
     # Only once the critique has pushed back does the draft commit to a root
     # cause -- so an inconclusive correlation always costs at least one revision.
@@ -187,7 +187,7 @@ def draft_postmortem(incident: str, correlation: str, remediation: str, feedback
     )
 
 
-@praximetry.stage("critique_postmortem")
+@px.stage("critique_postmortem")
 def critique_postmortem(draft: str) -> str:
     verdict = "approve" if "root cause:" in draft else "reject: no root cause stated"
     return _sim_llm(
@@ -197,7 +197,7 @@ def critique_postmortem(draft: str) -> str:
     )
 
 
-@praximetry.stage("publish_postmortem")
+@px.stage("publish_postmortem")
 def publish_postmortem(draft: str) -> str:
     return _sim_llm(
         "claude-sonnet-5",

@@ -20,11 +20,11 @@ Try:
 """
 from __future__ import annotations
 
-import praximetry
+import praximetry as px
 
 from ._real import default_model, premium_model, real_chat
 
-praximetry.init(project="swe-patch")
+px.init(project="swe-patch")
 
 # A tiny repo with three real bugs.
 REPO: dict[str, str] = {
@@ -75,7 +75,7 @@ FEW_SHOT = "".join(
 )
 
 
-@praximetry.stage("localize")
+@px.stage("localize")
 def localize(issue: str) -> str:
     messages = [
         {"role": "system", "content": RULES},
@@ -87,7 +87,7 @@ def localize(issue: str) -> str:
     return next((p for p in REPO if p in raw), raw)
 
 
-@praximetry.stage("propose_patch")
+@px.stage("propose_patch")
 def propose_patch(path: str, issue: str) -> str:
     messages = [
         {"role": "system", "content": RULES},
@@ -99,7 +99,7 @@ def propose_patch(path: str, issue: str) -> str:
     return real_chat(default_model(), messages)
 
 
-@praximetry.stage("run_tests")
+@px.stage("run_tests")
 def run_tests(path: str, patch: str) -> str:
     """Non-LLM: actually execute the patched module and run the repo's tests."""
     ns: dict = {}
@@ -110,7 +110,7 @@ def run_tests(path: str, patch: str) -> str:
         return "FAIL"
 
 
-@praximetry.stage("resolve")
+@px.stage("resolve")
 def resolve(issue: str) -> str:
     path = localize(issue)
     if path not in REPO:

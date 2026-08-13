@@ -10,7 +10,7 @@ one span processor and picks all of it up - span name becomes the stage, and
 The trade-off worth knowing: OTel is *read-only* telemetry. It gives you
 observe -> evaluate -> recommend across every framework. To let the optimizer
 *apply* a winner in-flight (swap the model, slim the prompt) you still want
-`praximetry.init()`, because you cannot mutate a request from a telemetry span.
+`px.init()`, because you cannot mutate a request from a telemetry span.
 
 Try:
     python -m praximetry.examples.workflows.otel_graph_agent
@@ -22,10 +22,10 @@ from __future__ import annotations
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 
-import praximetry
+import praximetry as px
 
 trace.set_tracer_provider(TracerProvider())
-praximetry.instrument_otel()          # one call; no per-framework connector
+px.instrument_otel()          # one call; no per-framework connector
 tracer = trace.get_tracer("shipping-graph")
 
 # A "graph": nodes with a model each, the way a real LangGraph app is wired.

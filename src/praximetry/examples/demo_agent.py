@@ -8,10 +8,10 @@ Runs fully offline (simulated LLM) so you can explore recorded traffic without k
 import json
 import random
 
-import praximetry
+import praximetry as px
 from praximetry import pricing
 
-praximetry.init(project="demo-support-bot")
+px.init(project="demo-support-bot")
 
 SYSTEM = "You are a meticulous support-ticket triage agent. " * 8  # deliberately bloated
 
@@ -30,13 +30,13 @@ def _sim_llm(model: str, messages: list[dict]) -> str:
                    if any(k in text for k in kws)), "general")
     tin = sum(len(str(m.get("content", ""))) // 4 for m in messages)
     tout = len(answer) // 4 + random.randint(3, 12)
-    praximetry.record_call(provider="sim", model=model, messages=messages,
-                           response_text=answer, input_tokens=tin, output_tokens=tout,
-                           cost_usd=pricing.cost_usd(model, tin, tout), latency_ms=random.uniform(200, 900))
+    px.record_call(provider="sim", model=model, messages=messages,
+                   response_text=answer, input_tokens=tin, output_tokens=tout,
+                   cost_usd=pricing.cost_usd(model, tin, tout), latency_ms=random.uniform(200, 900))
     return answer
 
 
-@praximetry.stage("classify")
+@px.stage("classify")
 def classify(ticket: str) -> str:
     # Anti-patterns on purpose: premium model, bloated system prompt, pretty JSON —
     # this is exactly the kind of traffic praximetry-cloud's detectors flag.
@@ -47,7 +47,7 @@ def classify(ticket: str) -> str:
     return _sim_llm("claude-opus-4-8", messages)
 
 
-@praximetry.stage("draft_reply")
+@px.stage("draft_reply")
 def draft_reply(ticket: str, category: str) -> str:
     messages = [{"role": "system", "content": SYSTEM},
                 {"role": "user", "content": f"Draft a reply for a {category} ticket: {ticket}"}]

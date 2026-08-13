@@ -13,11 +13,11 @@ Try:
 """
 import json
 
-import praximetry
+import praximetry as px
 
 from ._real import default_model, premium_model, real_chat
 
-praximetry.init(project="support-triage")
+px.init(project="support-triage")
 
 # Deliberately duplicated policy lines (common when prompts grow by accretion).
 POLICY = (
@@ -49,7 +49,7 @@ KB = {
 }
 
 
-@praximetry.stage("classify")
+@px.stage("classify")
 def classify(ticket: str) -> str:
     messages = [
         {"role": "system", "content": SYSTEM},
@@ -61,13 +61,13 @@ def classify(ticket: str) -> str:
     return real_chat(premium_model(), messages).strip().lower()
 
 
-@praximetry.stage("retrieve")
+@px.stage("retrieve")
 def retrieve(category: str) -> dict:
     """Non-LLM stage: fetch routing info (still attributed in traces via stage)."""
     return KB["categories"].get(category, {"team": "general-support", "sla_hours": 72})
 
 
-@praximetry.stage("respond")
+@px.stage("respond")
 def respond(ticket: str, category: str) -> str:
     info = retrieve(category)
     messages = [

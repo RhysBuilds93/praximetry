@@ -6,11 +6,11 @@ is recorded locally: tokens, cost, latency, and the prompt/response, attributed
 to the stage of your pipeline that made it.
 
 ```python
-import praximetry
+import praximetry as px
 
-praximetry.init(project="my-agent")   # auto-instruments openai/anthropic/litellm/gemini SDKs
+px.init(project="my-agent")   # auto-instruments openai/anthropic/litellm/gemini SDKs
 
-@praximetry.stage("summarize")
+@px.stage("summarize")
 def summarize(text):
     ...  # your existing code, untouched
 ```
@@ -39,7 +39,7 @@ pip install praximetry
 `praximetry` doesn't require openai/anthropic/etc. to be installed — the
 per-provider patchers import lazily, so `init()` only instruments what's
 actually present. For manual instrumentation (or providers without a patcher),
-call `praximetry.record_call(...)` directly inside a `@praximetry.stage`
+call `px.record_call(...)` directly inside a `@px.stage`
 function.
 
 ## What this is (and isn't)
