@@ -96,6 +96,20 @@ def test_parent_call_id_chains_sequential_calls():
     assert b.parent_call_id == a.id
 
 
+def test_nested_stage_records_full_path():
+    @praximetry.stage("extract")
+    def extract():
+        return record_call(provider="fake", model="gpt-4o")
+
+    @praximetry.stage("summarize")
+    def summarize():
+        return extract()
+
+    with run_context(name="nested"):
+        call = summarize()
+    assert call.stage == "summarize>extract"
+
+
 def test_parent_call_id_auto_links_concurrent_fanout():
     async def sub_agent(name):
         return record_call(provider="fake", model="gpt-4o", stage=name)
