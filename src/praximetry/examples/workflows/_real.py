@@ -1,7 +1,7 @@
 """Shared LLM call for the example workflows -- ordinary customer code, not a
 special harness.
 
-Every workflow calls `praximetry.init(auto_instrument_sdks=True)` (the
+Every workflow calls `px.init(auto_instrument_sdks=True)` (the
 default), which monkey-patches `openai.resources.chat.completions.Completions
 .create` for the whole process. So the `client.chat.completions.create(...)`
 call below is recorded, priced, and timed the exact same way it would be in
