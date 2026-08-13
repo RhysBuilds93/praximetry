@@ -27,11 +27,11 @@ import copy
 import json
 import re
 
-import praximetry
+import praximetry as px
 
 from ._real import default_model, premium_model, real_chat
 
-praximetry.init(project="tau-retail")
+px.init(project="tau-retail")
 
 # The business policy the agent must comply with. Written the way real ones are:
 # appended to over time, so the same rules appear more than once.
@@ -95,7 +95,7 @@ def _order_id(text: str) -> str:
     return m.group(0).upper() if m else ""
 
 
-@praximetry.stage("plan_action")
+@px.stage("plan_action")
 def plan_action(request: str) -> dict:
     """Pick the tool call. This is the stage that has to respect the policy."""
     messages = [
@@ -119,7 +119,7 @@ def plan_action(request: str) -> dict:
         return {"tool": "get_order", "order_id": _order_id(request)}
 
 
-@praximetry.stage("execute")
+@px.stage("execute")
 def execute(action: dict) -> dict:
     """Non-LLM tool execution. Enforces the policy server-side too."""
     oid, tool = action.get("order_id", ""), action.get("tool")
@@ -142,7 +142,7 @@ def execute(action: dict) -> dict:
     return {"order_id": oid, **order}
 
 
-@praximetry.stage("write_reply")
+@px.stage("write_reply")
 def write_reply(request: str, result: dict) -> str:
     messages = [
         {"role": "system", "content": SYSTEM},
@@ -153,7 +153,7 @@ def write_reply(request: str, result: dict) -> str:
     return real_chat(default_model(), messages)
 
 
-@praximetry.stage("handle_request")
+@px.stage("handle_request")
 def handle_request(request: str) -> dict:
     """Full task. Returns the final order state - this is what tau-bench scores."""
     action = plan_action(request)

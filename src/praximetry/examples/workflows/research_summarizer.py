@@ -12,11 +12,11 @@ Try:
 """
 import asyncio
 
-import praximetry
+import praximetry as px
 
 from ._real import default_model, premium_model, real_chat
 
-praximetry.init(project="research-agent")
+px.init(project="research-agent")
 
 DOCS = {
     "solar": ("Solar deployment grew 28% year over year. Panel prices fell 12%. "
@@ -31,7 +31,7 @@ DOCS = {
 }
 
 
-@praximetry.stage("plan")
+@px.stage("plan")
 def plan(question: str) -> list[str]:
     messages = [
         {"role": "user", "content":
@@ -44,7 +44,7 @@ def plan(question: str) -> list[str]:
     return topics or ["solar"]
 
 
-@praximetry.stage("summarize_chunk")
+@px.stage("summarize_chunk")
 async def summarize_chunk(topic: str) -> str:
     messages = [
         {"role": "system", "content":
@@ -55,7 +55,7 @@ async def summarize_chunk(topic: str) -> str:
     return real_chat(premium_model(), messages)
 
 
-@praximetry.stage("synthesize")
+@px.stage("synthesize")
 def synthesize(question: str, summaries: list[str]) -> str:
     messages = [
         {"role": "user", "content": f"Q: {question}\nNotes: {' '.join(summaries)}\nSynthesize."},

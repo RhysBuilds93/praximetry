@@ -31,11 +31,11 @@ Try:
 """
 import asyncio
 
-import praximetry
+import praximetry as px
 
 from ._real import default_model, real_chat
 
-praximetry.init(project="incident-response")
+px.init(project="incident-response")
 
 SYSTEM = "You are an on-call incident response agent. Be precise and cite signals. " * 6
 
@@ -51,7 +51,7 @@ def _parse_category(raw: str) -> str:
 
 # -- branch point --------------------------------------------------------------
 
-@praximetry.stage("triage")
+@px.stage("triage")
 def triage(incident: str) -> str:
     raw = real_chat(
         default_model(),
@@ -65,7 +65,7 @@ def triage(incident: str) -> str:
 
 # -- concurrent fan-out --------------------------------------------------------
 
-@praximetry.stage("fetch_logs")
+@px.stage("fetch_logs")
 async def fetch_logs(incident: str) -> str:
     await asyncio.sleep(0)  # yield, so the siblings genuinely interleave
     return real_chat(
@@ -77,7 +77,7 @@ async def fetch_logs(incident: str) -> str:
     )
 
 
-@praximetry.stage("fetch_metrics")
+@px.stage("fetch_metrics")
 async def fetch_metrics(incident: str) -> str:
     await asyncio.sleep(0)
     return real_chat(
@@ -89,7 +89,7 @@ async def fetch_metrics(incident: str) -> str:
     )
 
 
-@praximetry.stage("fetch_alerts")
+@px.stage("fetch_alerts")
 async def fetch_alerts(incident: str) -> str:
     await asyncio.sleep(0)
     return real_chat(
@@ -104,7 +104,7 @@ async def fetch_alerts(incident: str) -> str:
 FETCHERS = {"logs": fetch_logs, "metrics": fetch_metrics, "alerts": fetch_alerts}
 
 
-@praximetry.stage("gather_signals")
+@px.stage("gather_signals")
 async def gather_signals(incident: str, category: str = "") -> list[str]:
     """Fan out over the signal sources this category needs.
 
@@ -127,7 +127,7 @@ async def gather_signals(incident: str, category: str = "") -> list[str]:
     return list(await asyncio.gather(*(FETCHERS[s](incident) for s in sources)))
 
 
-@praximetry.stage("correlate")
+@px.stage("correlate")
 def correlate(incident: str, signals: list[str] | None = None) -> str:
     """Join stage: consumes the combined result of the concurrent branches."""
     return real_chat(
@@ -144,7 +144,7 @@ def correlate(incident: str, signals: list[str] | None = None) -> str:
 # -- the three branch destinations ---------------------------------------------
 
 def _playbook(stage_name: str, guidance: str):
-    @praximetry.stage(stage_name)
+    @px.stage(stage_name)
     def run_playbook(incident: str, correlation: str = "") -> str:
         return real_chat(
             default_model(),
@@ -166,7 +166,7 @@ PLAYBOOKS = {"database": db_playbook, "network": network_playbook, "security": s
 
 # -- retry loop ----------------------------------------------------------------
 
-@praximetry.stage("draft_postmortem")
+@px.stage("draft_postmortem")
 def draft_postmortem(incident: str, correlation: str = "", remediation: str = "",
                      feedback: str = "") -> str:
     # The draft only commits to a root cause once the correlation is clear or the
@@ -188,7 +188,7 @@ def draft_postmortem(incident: str, correlation: str = "", remediation: str = ""
     )
 
 
-@praximetry.stage("critique_postmortem")
+@px.stage("critique_postmortem")
 def critique_postmortem(draft: str) -> str:
     return real_chat(
         default_model(),
@@ -203,7 +203,7 @@ def critique_postmortem(draft: str) -> str:
     )
 
 
-@praximetry.stage("publish_postmortem")
+@px.stage("publish_postmortem")
 def publish_postmortem(draft: str) -> str:
     # This stage only logs that an already-approved postmortem went out --
     # remediation status is the critique stage's job to gate on, not this
