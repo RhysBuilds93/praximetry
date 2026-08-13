@@ -23,11 +23,11 @@ from __future__ import annotations
 
 import json
 
-import praximetry
+import praximetry as px
 
 from ._real import default_model, premium_model, real_chat
 
-praximetry.init(project="gaia-multihop")
+px.init(project="gaia-multihop")
 
 # Retrieval index the tools search. Stands in for web + file search.
 INDEX: dict[str, str] = {
@@ -64,7 +64,7 @@ VERBOSE_GUIDE = (
 )
 
 
-@praximetry.stage("decompose")
+@px.stage("decompose")
 def decompose(question: str) -> list[str]:
     messages = [
         {"role": "system", "content": VERBOSE_GUIDE},
@@ -77,13 +77,13 @@ def decompose(question: str) -> list[str]:
     return [k.strip() for k in raw.split(",") if k.strip() in INDEX]
 
 
-@praximetry.stage("lookup")
+@px.stage("lookup")
 def lookup(hops: list[str]) -> list[str]:
     """Non-LLM retrieval tool. Returns evidence lines the model can cite."""
     return [f"- {h} = {INDEX[h]}" for h in hops if h in INDEX]
 
 
-@praximetry.stage("final_answer")
+@px.stage("final_answer")
 def final_answer(question: str, evidence: list[str]) -> str:
     messages = [
         {"role": "system", "content": VERBOSE_GUIDE},
@@ -94,7 +94,7 @@ def final_answer(question: str, evidence: list[str]) -> str:
     return real_chat(premium_model(), messages)
 
 
-@praximetry.stage("answer")
+@px.stage("answer")
 def answer(question: str) -> str:
     return final_answer(question, lookup(decompose(question)))
 

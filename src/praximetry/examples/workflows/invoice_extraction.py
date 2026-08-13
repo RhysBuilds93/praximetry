@@ -13,11 +13,11 @@ Try:
 """
 import json
 
-import praximetry
+import praximetry as px
 
 from ._real import premium_model, real_chat
 
-praximetry.init(project="invoice-extraction")
+px.init(project="invoice-extraction")
 
 SCHEMA = {
     "type": "object",
@@ -32,7 +32,7 @@ SCHEMA = {
 }
 
 
-@praximetry.stage("extract_invoice")
+@px.stage("extract_invoice")
 def extract_invoice(invoice_text: str) -> str:
     messages = [
         {"role": "system", "content":
