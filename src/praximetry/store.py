@@ -5,7 +5,9 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args, get_origin
+
+from pydantic import BaseModel
 
 from .config import get_config
 from .models import Call, EvalResult, Experiment, Run
@@ -52,6 +54,56 @@ _SCHEMA = "\n".join(
     for table, columns in _TABLES.items()
 ) + "\n" + "\n".join(_INDEXES)
 
+# Model backing each table — column order in _TABLES must match each model's
+# `model_fields` declaration order (verified by the round-trip tests in
+# tests/test_core.py). _to_row/_row_to_model below use this to drive generic
+# save/read instead of hand-written positional tuples.
+_MODELS: dict[str, type[BaseModel]] = {
+    "runs": Run,
+    "calls": Call,
+    "eval_results": EvalResult,
+    "experiments": Experiment,
+}
+
+
+def _unwrap_optional(annotation: Any) -> Any:
+    """Strip `Optional[X]` / `X | None` down to `X`; pass through everything else."""
+    args = get_args(annotation)
+    if get_origin(annotation) is not None and type(None) in args:
+        non_none = [a for a in args if a is not type(None)]
+        if len(non_none) == 1:
+            return non_none[0]
+    return annotation
+
+
+def _to_row(obj: BaseModel) -> tuple:
+    """Serialize `obj` into a tuple matching its table's column order in `_TABLES`."""
+    values = []
+    for name in type(obj).model_fields:
+        value = getattr(obj, name)
+        if isinstance(value, (dict, list)):
+            values.append(json.dumps(value))
+        elif isinstance(value, bool):
+            values.append(int(value))
+        else:
+            values.append(value)
+    return tuple(values)
+
+
+def _row_to_model(cls: type[BaseModel], row: sqlite3.Row) -> BaseModel:
+    """Inverse of `_to_row`: rehydrate a model instance from a raw sqlite row."""
+    d = dict(row)
+    for name, field in cls.model_fields.items():
+        annotation = _unwrap_optional(field.annotation)
+        origin = get_origin(annotation) or annotation
+        if origin is dict:
+            d[name] = json.loads(d[name] or "{}")
+        elif origin is list:
+            d[name] = json.loads(d[name] or "[]")
+        elif origin is bool:
+            d[name] = bool(d[name])
+    return cls(**d)
+
 
 class Store:
     def __init__(self, db_path: str | Path | None = None):
@@ -87,56 +139,32 @@ class Store:
         return conn
 
     # -- writes ------------------------------------------------------------
-    def save_run(self, run: Run) -> None:
+    def _save(self, table: str, obj: BaseModel) -> None:
+        placeholders = ",".join("?" for _ in _MODELS[table].model_fields)
         with self._conn() as c:
             c.execute(
-                "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?)",
-                (run.id, run.project, run.name, run.started_at, run.ended_at,
-                 run.experiment_id, json.dumps(run.metadata)),
+                f"INSERT OR REPLACE INTO {table} VALUES ({placeholders})",
+                _to_row(obj),
             )
+
+    def save_run(self, run: Run) -> None:
+        self._save("runs", run)
 
     def save_call(self, call: Call) -> None:
-        with self._conn() as c:
-            c.execute(
-                """INSERT OR REPLACE INTO calls
-                   (id, run_id, parent_call_id, stage, provider, model, messages, response_text,
-                    input_tokens, output_tokens, cost_usd, latency_ms, ts, error, metadata)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (call.id, call.run_id, call.parent_call_id, call.stage, call.provider, call.model,
-                 json.dumps(call.messages), call.response_text,
-                 call.input_tokens, call.output_tokens, call.cost_usd, call.latency_ms,
-                 call.ts, call.error, json.dumps(call.metadata)),
-            )
+        self._save("calls", call)
 
     def save_eval_result(self, r: EvalResult) -> None:
-        with self._conn() as c:
-            c.execute(
-                "INSERT OR REPLACE INTO eval_results VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (r.id, r.experiment_id, r.run_id, r.stage, r.example_id,
-                 r.scorer, r.score, int(r.passed), r.detail, r.ts),
-            )
+        self._save("eval_results", r)
 
     def save_experiment(self, e: Experiment) -> None:
-        with self._conn() as c:
-            c.execute(
-                "INSERT OR REPLACE INTO experiments VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (e.id, e.name, e.stage, json.dumps(e.variant), e.created_at,
-                 e.quality, e.pass_rate, e.cost_usd,
-                 e.input_tokens, e.output_tokens, int(e.baseline)),
-            )
+        self._save("experiments", e)
 
     # -- reads -------------------------------------------------------------
     def runs(self, limit: int = 100) -> list[Run]:
         rows = self._conn().execute(
             "SELECT * FROM runs ORDER BY started_at DESC LIMIT ?", (limit,)
         ).fetchall()
-        return [self._row_to_run(r) for r in rows]
-
-    @staticmethod
-    def _row_to_run(r: sqlite3.Row) -> Run:
-        d = dict(r)
-        d["metadata"] = json.loads(d["metadata"] or "{}")
-        return Run(**d)
+        return [_row_to_model(Run, r) for r in rows]
 
     def calls(self, run_id: str | None = None, stage: str | None = None,
               limit: int = 1000) -> list[Call]:
@@ -153,14 +181,7 @@ class Store:
         q += " ORDER BY ts DESC LIMIT ?"
         args.append(limit)
         rows = self._conn().execute(q, args).fetchall()
-        return [self._row_to_call(r) for r in rows]
-
-    @staticmethod
-    def _row_to_call(r: sqlite3.Row) -> Call:
-        d = dict(r)
-        d["messages"] = json.loads(d["messages"] or "[]")
-        d["metadata"] = json.loads(d["metadata"] or "{}")
-        return Call(**d)
+        return [_row_to_model(Call, r) for r in rows]
 
     def stage_summary(self) -> list[dict[str, Any]]:
         rows = self._conn().execute(
@@ -193,13 +214,8 @@ class Store:
             q += " WHERE stage=?"
             args.append(stage)
         q += " ORDER BY created_at DESC"
-        out = []
-        for r in self._conn().execute(q, args).fetchall():
-            d = dict(r)
-            d["variant"] = json.loads(d["variant"] or "{}")
-            d["baseline"] = bool(d["baseline"])
-            out.append(Experiment(**d))
-        return out
+        rows = self._conn().execute(q, args).fetchall()
+        return [_row_to_model(Experiment, r) for r in rows]
 
     def eval_results(self, experiment_id: str | None = None) -> list[EvalResult]:
         q, args = "SELECT * FROM eval_results", []
@@ -208,7 +224,7 @@ class Store:
             args.append(experiment_id)
         q += " ORDER BY ts DESC"
         rows = self._conn().execute(q, args).fetchall()
-        return [EvalResult(**{**dict(r), "passed": bool(r["passed"])}) for r in rows]
+        return [_row_to_model(EvalResult, r) for r in rows]
 
     # -- bulk ingest (used by the remote collector) ------------------------
     def ingest(self, payload: dict[str, Any]) -> dict[str, int]:
