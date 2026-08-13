@@ -10,29 +10,47 @@ from typing import Any
 from .config import get_config
 from .models import Call, EvalResult, Experiment, Run
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS runs (
-    id TEXT PRIMARY KEY, project TEXT, name TEXT,
-    started_at REAL, ended_at REAL, experiment_id TEXT, metadata TEXT
-);
-CREATE TABLE IF NOT EXISTS calls (
-    id TEXT PRIMARY KEY, run_id TEXT, parent_call_id TEXT, stage TEXT, provider TEXT, model TEXT,
-    messages TEXT, response_text TEXT,
-    input_tokens INTEGER, output_tokens INTEGER, cost_usd REAL, latency_ms REAL,
-    ts REAL, error TEXT, metadata TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_calls_run ON calls(run_id);
-CREATE INDEX IF NOT EXISTS idx_calls_stage ON calls(stage);
-CREATE TABLE IF NOT EXISTS eval_results (
-    id TEXT PRIMARY KEY, experiment_id TEXT, run_id TEXT, stage TEXT,
-    example_id TEXT, scorer TEXT, score REAL, passed INTEGER, detail TEXT, ts REAL
-);
-CREATE TABLE IF NOT EXISTS experiments (
-    id TEXT PRIMARY KEY, name TEXT, stage TEXT, variant TEXT, created_at REAL,
-    quality REAL, pass_rate REAL, cost_usd REAL,
-    input_tokens INTEGER, output_tokens INTEGER, baseline INTEGER
-);
-"""
+# Single source of truth for table shape: both the initial CREATE TABLE and the
+# startup migration (below) are generated from this, so a column added here is
+# picked up on existing on-disk databases with no new migration code.
+_TABLES: dict[str, list[tuple[str, str]]] = {
+    "runs": [
+        ("id", "TEXT PRIMARY KEY"), ("project", "TEXT"), ("name", "TEXT"),
+        ("started_at", "REAL"), ("ended_at", "REAL"),
+        ("experiment_id", "TEXT"), ("metadata", "TEXT"),
+    ],
+    "calls": [
+        ("id", "TEXT PRIMARY KEY"), ("run_id", "TEXT"), ("parent_call_id", "TEXT"),
+        ("stage", "TEXT"), ("provider", "TEXT"), ("model", "TEXT"),
+        ("messages", "TEXT"), ("response_text", "TEXT"),
+        ("input_tokens", "INTEGER"), ("output_tokens", "INTEGER"),
+        ("cost_usd", "REAL"), ("latency_ms", "REAL"),
+        ("ts", "REAL"), ("error", "TEXT"), ("metadata", "TEXT"),
+    ],
+    "eval_results": [
+        ("id", "TEXT PRIMARY KEY"), ("experiment_id", "TEXT"), ("run_id", "TEXT"),
+        ("stage", "TEXT"), ("example_id", "TEXT"), ("scorer", "TEXT"),
+        ("score", "REAL"), ("passed", "INTEGER"), ("detail", "TEXT"), ("ts", "REAL"),
+    ],
+    "experiments": [
+        ("id", "TEXT PRIMARY KEY"), ("name", "TEXT"), ("stage", "TEXT"),
+        ("variant", "TEXT"), ("created_at", "REAL"),
+        ("quality", "REAL"), ("pass_rate", "REAL"), ("cost_usd", "REAL"),
+        ("input_tokens", "INTEGER"), ("output_tokens", "INTEGER"), ("baseline", "INTEGER"),
+    ],
+}
+
+_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_calls_run ON calls(run_id);",
+    "CREATE INDEX IF NOT EXISTS idx_calls_stage ON calls(stage);",
+]
+
+_SCHEMA = "\n".join(
+    f"CREATE TABLE IF NOT EXISTS {table} ("
+    + ", ".join(f"{col} {type_}" for col, type_ in columns)
+    + ");"
+    for table, columns in _TABLES.items()
+) + "\n" + "\n".join(_INDEXES)
 
 
 class Store:
@@ -47,14 +65,17 @@ class Store:
     @staticmethod
     def _migrate(c: sqlite3.Connection) -> None:
         """`CREATE TABLE IF NOT EXISTS` is a no-op against a pre-existing table, so a
-        `calls` table created before `parent_call_id` was added stays 14 columns
-        forever — not just missing the field, but silently breaking `save_call`'s
-        positional INSERT (14 columns, 15 values) the moment it's ever called against
-        that file. Patch it up here rather than assume every `.praximetry/*.db` on
-        disk was created after this column existed."""
-        cols = {row[1] for row in c.execute("PRAGMA table_info(calls)").fetchall()}
-        if "parent_call_id" not in cols:
-            c.execute("ALTER TABLE calls ADD COLUMN parent_call_id TEXT")
+        `.praximetry/*.db` created before a column existed stays missing it forever
+        — not just the field, but silently breaking the positional INSERTs in
+        `save_*` the moment they're next called against that file. Diff each
+        table's on-disk columns against `_TABLES` and ALTER in whatever's missing,
+        so adding a column to `_TABLES` is the only step a future schema change
+        needs — no new one-off migration per column."""
+        for table, columns in _TABLES.items():
+            existing = {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
+            for col, type_ in columns:
+                if col not in existing:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {type_.split()[0]}")
 
     def _conn(self) -> sqlite3.Connection:
         conn = getattr(self._local, "conn", None)
