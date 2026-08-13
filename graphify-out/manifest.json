@@ -1,0 +1,232 @@
+{
+  ".claude/settings.local.json": {
+    "mtime": 1786599054.8856902,
+    "ast_hash": "1c7771067e5080e4174bbb1fbb975b81",
+    "semantic_hash": "1c7771067e5080e4174bbb1fbb975b81"
+  },
+  "pyproject.toml": {
+    "mtime": 1786601736.195809,
+    "ast_hash": "76802aa0b5efe866f6929aac0f7e3a20",
+    "semantic_hash": "76802aa0b5efe866f6929aac0f7e3a20"
+  },
+  "src/praximetry/__init__.py": {
+    "mtime": 1786606851.6443048,
+    "ast_hash": "84d59834cd89e0f290a979c60f2ce136",
+    "semantic_hash": "84d59834cd89e0f290a979c60f2ce136"
+  },
+  "src/praximetry/cli.py": {
+    "mtime": 1786601736.195809,
+    "ast_hash": "f4e9f9f4c577d8894bcbc840f890fea3",
+    "semantic_hash": "f4e9f9f4c577d8894bcbc840f890fea3"
+  },
+  "src/praximetry/config.py": {
+    "mtime": 1785660196.1836615,
+    "ast_hash": "d9cd07112509973c3642d62c155b9ffa",
+    "semantic_hash": "d9cd07112509973c3642d62c155b9ffa"
+  },
+  "src/praximetry/currency.py": {
+    "mtime": 1785660196.1836615,
+    "ast_hash": "1ea8662e4e78dfdaa315fce0bda53b1b",
+    "semantic_hash": "1ea8662e4e78dfdaa315fce0bda53b1b"
+  },
+  "src/praximetry/eval/__init__.py": {
+    "mtime": 1786601736.195809,
+    "ast_hash": "6fcd39b16712e1e3430c1362930e5a0c",
+    "semantic_hash": "6fcd39b16712e1e3430c1362930e5a0c"
+  },
+  "src/praximetry/eval/capture.py": {
+    "mtime": 1786607860.8136654,
+    "ast_hash": "d11bc5b3d134e8c13b1258a556a0de4d",
+    "semantic_hash": "d11bc5b3d134e8c13b1258a556a0de4d"
+  },
+  "src/praximetry/eval/dataset.py": {
+    "mtime": 1786601736.1996167,
+    "ast_hash": "61692e1f99623e2d4a52d4edb94bce4a",
+    "semantic_hash": "61692e1f99623e2d4a52d4edb94bce4a"
+  },
+  "src/praximetry/eval/hosted.py": {
+    "mtime": 1786601736.1996167,
+    "ast_hash": "0cd530f9554ee9704824b4ebe4e3b1d6",
+    "semantic_hash": "0cd530f9554ee9704824b4ebe4e3b1d6"
+  },
+  "src/praximetry/examples/__init__.py": {
+    "mtime": 1786601736.1996167,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "src/praximetry/examples/demo_agent.py": {
+    "mtime": 1786602124.2321944,
+    "ast_hash": "01abb27802c321429ab1ba96fa79495f",
+    "semantic_hash": "01abb27802c321429ab1ba96fa79495f"
+  },
+  "src/praximetry/examples/incident_agent.py": {
+    "mtime": 1786602124.2321944,
+    "ast_hash": "eb26395fc4d6f45056c215ac0fbc6495",
+    "semantic_hash": "eb26395fc4d6f45056c215ac0fbc6495"
+  },
+  "src/praximetry/examples/workflows/__init__.py": {
+    "mtime": 1786601736.1996167,
+    "ast_hash": "d41d8cd98f00b204e9800998ecf8427e",
+    "semantic_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  "src/praximetry/examples/workflows/_real.py": {
+    "mtime": 1786602124.2321944,
+    "ast_hash": "8baa9cefda82c96b1fa68be2cbaa3da0",
+    "semantic_hash": "8baa9cefda82c96b1fa68be2cbaa3da0"
+  },
+  "src/praximetry/examples/workflows/gaia_multihop.py": {
+    "mtime": 1786602124.2321944,
+    "ast_hash": "4583b601a4ed36354b013de76e665a39",
+    "semantic_hash": "4583b601a4ed36354b013de76e665a39"
+  },
+  "src/praximetry/examples/workflows/incident_response.py": {
+    "mtime": 1786602124.2360895,
+    "ast_hash": "997a9c93528db254ff70bddfdb76048a",
+    "semantic_hash": "997a9c93528db254ff70bddfdb76048a"
+  },
+  "src/praximetry/examples/workflows/invoice_extraction.py": {
+    "mtime": 1786602124.2360895,
+    "ast_hash": "6dc1472473047bb10a00cceddc836991",
+    "semantic_hash": "6dc1472473047bb10a00cceddc836991"
+  },
+  "src/praximetry/examples/workflows/otel_graph_agent.py": {
+    "mtime": 1786602124.2360895,
+    "ast_hash": "9d5cb25ded82f7f85017fafbf9fb2356",
+    "semantic_hash": "9d5cb25ded82f7f85017fafbf9fb2356"
+  },
+  "src/praximetry/examples/workflows/research_summarizer.py": {
+    "mtime": 1786602124.2360895,
+    "ast_hash": "10bf0e015a0629f2476d00db4a2a3ea3",
+    "semantic_hash": "10bf0e015a0629f2476d00db4a2a3ea3"
+  },
+  "src/praximetry/examples/workflows/support_triage.py": {
+    "mtime": 1786602124.2360895,
+    "ast_hash": "4ec43af19e04a903626212699f20b90d",
+    "semantic_hash": "4ec43af19e04a903626212699f20b90d"
+  },
+  "src/praximetry/examples/workflows/swe_patch_agent.py": {
+    "mtime": 1786602124.2360895,
+    "ast_hash": "1697ba6116c970c511fae6b6d1472c41",
+    "semantic_hash": "1697ba6116c970c511fae6b6d1472c41"
+  },
+  "src/praximetry/examples/workflows/tau_retail_agent.py": {
+    "mtime": 1786602124.2360895,
+    "ast_hash": "9a04d229e21949aa6a91b7b5483fbb89",
+    "semantic_hash": "9a04d229e21949aa6a91b7b5483fbb89"
+  },
+  "src/praximetry/instrument/__init__.py": {
+    "mtime": 1785660196.1836615,
+    "ast_hash": "acb61f93833500b80d6f2dbaea88d7bb",
+    "semantic_hash": "acb61f93833500b80d6f2dbaea88d7bb"
+  },
+  "src/praximetry/instrument/decorators.py": {
+    "mtime": 1785660196.1836615,
+    "ast_hash": "84ede100165727b73de8d329a553c138",
+    "semantic_hash": "84ede100165727b73de8d329a553c138"
+  },
+  "src/praximetry/instrument/extractors.py": {
+    "mtime": 1785660196.1836615,
+    "ast_hash": "36ed3af4c1d33d4297e75c7d1488c4b8",
+    "semantic_hash": "36ed3af4c1d33d4297e75c7d1488c4b8"
+  },
+  "src/praximetry/instrument/patch.py": {
+    "mtime": 1786607860.8136654,
+    "ast_hash": "58aaa7660c29739182ba4fb4b553695d",
+    "semantic_hash": "58aaa7660c29739182ba4fb4b553695d"
+  },
+  "src/praximetry/instrument/providers.py": {
+    "mtime": 1786607861.227264,
+    "ast_hash": "196a32cf2f251fffafb934b99d918a4b",
+    "semantic_hash": "196a32cf2f251fffafb934b99d918a4b"
+  },
+  "src/praximetry/instrument/wrap.py": {
+    "mtime": 1785660196.1876614,
+    "ast_hash": "fc8fd1439d92dcb754bbaa72fbd9163a",
+    "semantic_hash": "fc8fd1439d92dcb754bbaa72fbd9163a"
+  },
+  "src/praximetry/models.py": {
+    "mtime": 1785877890.1238751,
+    "ast_hash": "4109cbbbc19ba553779fd561d6828ef7",
+    "semantic_hash": "4109cbbbc19ba553779fd561d6828ef7"
+  },
+  "src/praximetry/otel.py": {
+    "mtime": 1786606254.507496,
+    "ast_hash": "a0b697350007f664cead9c327049490a",
+    "semantic_hash": "a0b697350007f664cead9c327049490a"
+  },
+  "src/praximetry/pricing.py": {
+    "mtime": 1785660196.1876614,
+    "ast_hash": "d2d73437bfac17dadcfa6ed6b1da6e14",
+    "semantic_hash": "d2d73437bfac17dadcfa6ed6b1da6e14"
+  },
+  "src/praximetry/runtime.py": {
+    "mtime": 1786606851.6443048,
+    "ast_hash": "49dede58d132feea3937e0f7f23f7065",
+    "semantic_hash": "49dede58d132feea3937e0f7f23f7065"
+  },
+  "src/praximetry/store.py": {
+    "mtime": 1786606254.507496,
+    "ast_hash": "0563aa562ce541670770d241995569ae",
+    "semantic_hash": "0563aa562ce541670770d241995569ae"
+  },
+  "tests/conftest.py": {
+    "mtime": 1786606851.6443048,
+    "ast_hash": "3f080a3d8fb4fbd15261b2abb9547b5c",
+    "semantic_hash": "3f080a3d8fb4fbd15261b2abb9547b5c"
+  },
+  "tests/test_cli_eval.py": {
+    "mtime": 1786601736.2034245,
+    "ast_hash": "32d3dd016c96689cb88b6fd75380d9e4",
+    "semantic_hash": "32d3dd016c96689cb88b6fd75380d9e4"
+  },
+  "tests/test_cli_optimize.py": {
+    "mtime": 1786601736.2034245,
+    "ast_hash": "7634472d3eacafe6d704524ea93da550",
+    "semantic_hash": "7634472d3eacafe6d704524ea93da550"
+  },
+  "tests/test_cli_smoke.py": {
+    "mtime": 1785660196.1876614,
+    "ast_hash": "d8548dd6570a18c3f9b36ac1256431e2",
+    "semantic_hash": "d8548dd6570a18c3f9b36ac1256431e2"
+  },
+  "tests/test_core.py": {
+    "mtime": 1786606254.507496,
+    "ast_hash": "9bcd0af7391012cff7b3f52b754107cd",
+    "semantic_hash": "9bcd0af7391012cff7b3f52b754107cd"
+  },
+  "tests/test_eval_capture.py": {
+    "mtime": 1786607860.8136654,
+    "ast_hash": "158a87ee5bbeec524f80b842b2bd2eec",
+    "semantic_hash": "158a87ee5bbeec524f80b842b2bd2eec"
+  },
+  "tests/test_eval_hosted.py": {
+    "mtime": 1786601736.2034245,
+    "ast_hash": "d264307d20e36791fd50f04d412a8ce9",
+    "semantic_hash": "d264307d20e36791fd50f04d412a8ce9"
+  },
+  "tests/test_live_sdk.py": {
+    "mtime": 1785660196.1876614,
+    "ast_hash": "10641d78b6aa7a8f75f19afb5e81a180",
+    "semantic_hash": "10641d78b6aa7a8f75f19afb5e81a180"
+  },
+  "tests/test_otel.py": {
+    "mtime": 1786606254.507496,
+    "ast_hash": "ddba57a63d02c8ac11f652b541dd36d0",
+    "semantic_hash": "ddba57a63d02c8ac11f652b541dd36d0"
+  },
+  "tests/test_patch.py": {
+    "mtime": 1786607821.7955585,
+    "ast_hash": "fdc851280de17fd73b55b89a5015d16c",
+    "semantic_hash": "fdc851280de17fd73b55b89a5015d16c"
+  },
+  ".github/workflows/ci.yml": {
+    "mtime": 1785660196.1836615,
+    "ast_hash": "0764dd2fd3d6c3f5e8843f7eed4e8664",
+    "semantic_hash": "0764dd2fd3d6c3f5e8843f7eed4e8664"
+  },
+  "README.md": {
+    "mtime": 1786602124.2321944,
+    "ast_hash": "348a9833db5a761ce6f5edf1fa40af7d",
+    "semantic_hash": "348a9833db5a761ce6f5edf1fa40af7d"
+  }
+}
