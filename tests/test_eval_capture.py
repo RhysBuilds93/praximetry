@@ -7,12 +7,14 @@ would happen (there isn't one here), so interception is clean.
 """
 import asyncio
 
+import httpx
 import pytest
 
 import praximetry
 from praximetry import runtime
 from praximetry.eval import CaptureError, CapturedRequest, capture_request
 from praximetry.eval.dataset import Example
+from praximetry.instrument.patch import auto_instrument
 
 
 def test_captures_provider_model_and_messages(fake_llm):
@@ -118,6 +120,35 @@ def test_no_llm_call_raises_capture_error():
 
     with pytest.raises(CaptureError, match="no_call"):
         capture_request(Example(id="e1", stage="no_call", input="x"))
+
+
+def test_captures_via_instrumented_real_sdk_client():
+    """A stage that calls through an auto_instrument()-patched real SDK client
+    (not runtime.record_call directly) must still be captured cleanly, with
+    no real network contact — see PRA-66."""
+    from openai import OpenAI
+
+    auto_instrument()
+
+    def _unreachable(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("network call must not happen during capture")
+
+    client = OpenAI(api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(_unreachable)))
+
+    @praximetry.stage("real_sdk_classify")
+    def real_sdk_classify(text):
+        resp = client.chat.completions.create(
+            model="gpt-4o", messages=[{"role": "user", "content": text}])
+        return resp.choices[0].message.content
+
+    ex = Example(id="e1", stage="real_sdk_classify", input="double charge")
+
+    captured = capture_request(ex)
+
+    assert isinstance(captured, CapturedRequest)
+    assert captured.provider == "openai"
+    assert captured.model == "gpt-4o"
+    assert captured.messages == [{"role": "user", "content": "double charge"}]
 
 
 def test_record_call_restored_after_success_and_error(fake_llm):
