@@ -6,20 +6,25 @@ intercepts the first `praximetry.runtime.record_call` invocation, grabs its
 kwargs (provider, model, messages, tool defs, ...), and halts execution right
 there. No real network contact, and no `Call` is ever persisted.
 
-**How the interception works, and its limit:** a stage calls
-`runtime.record_call(...)` via a *module attribute* lookup at call time — so
-reassigning `praximetry.runtime.record_call` for the duration of the call is
-enough to intercept it, with zero coordination from the stage's own code,
-*provided the stage calls `record_call` before it calls out to a model*. The
-test-only `FakeLLM` does this (records first, no network involved at all). It
-does **not** intercept `praximetry.instrument.auto_instrument()`'s patched real
-SDK clients (openai/anthropic/etc) — those make the real network call first
-and only call `record_call` afterward with the real token counts, so by the
-time `capture_request()` intercepts anything, the request has already gone
-out. Customer stages that call `runtime.record_call` directly with their own
-pre-flight request shape are intercepted cleanly; stages that go through an
-instrumented real SDK client are not — a capture-mode addition to
-`praximetry.instrument.patch` would be needed for those (see PRA-66).
+**How the interception works:** two complementary paths, both active for the
+duration of the stage call:
+
+- A stage that calls `runtime.record_call(...)` directly does so via a
+  *module attribute* lookup at call time — so reassigning
+  `praximetry.runtime.record_call` is enough to intercept it, with zero
+  coordination from the stage's own code, *provided the stage calls
+  `record_call` before it calls out to a model*. The test-only `FakeLLM` does
+  this (records first, no network involved at all).
+- A stage that instead calls through an `auto_instrument()`-patched real SDK
+  client (openai/anthropic/etc) would otherwise make the real network call
+  first and only call `record_call` afterward with the real token counts —
+  too late to intercept. `praximetry.instrument.patch.capturing()` (PRA-66)
+  installs a pre-flight hook inside the patched create()/acreate() wrappers
+  that fires *before* the real SDK call, so this path is intercepted too,
+  with no network contact.
+
+Both paths raise `_CaptureSignal` to unwind before any real call completes,
+and converge on the same `CapturedRequest` shape.
 """
 from __future__ import annotations
 
@@ -30,6 +35,7 @@ from typing import Any
 import praximetry.runtime as runtime
 from pydantic import BaseModel, Field
 
+from ..instrument import patch as instrument_patch
 from .dataset import Example
 
 
@@ -87,10 +93,14 @@ def capture_request(example: Example) -> CapturedRequest:
             }
         raise _CaptureSignal(kwargs)
 
+    def _hook(kwargs: dict[str, Any]) -> Any:
+        raise _CaptureSignal(kwargs)
+
     original = runtime.record_call
     runtime.record_call = _intercept
     try:
-        call_stage(fn, example)
+        with instrument_patch.capturing(_hook):
+            call_stage(fn, example)
     except _CaptureSignal as signal:
         kwargs = signal.kwargs
         return CapturedRequest(
