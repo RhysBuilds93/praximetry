@@ -62,6 +62,26 @@ def test_store_runs_reader():
     assert runs[0].name == "triage"
 
 
+def test_runs_and_calls_filter_by_project():
+    config.get_config().project = "proj-a"
+    with run_context(name="a-run"):
+        record_call(provider="fake", model="gpt-4o", stage="s1")
+    config.get_config().project = "proj-b"
+    with run_context(name="b-run"):
+        record_call(provider="fake", model="gpt-4o", stage="s1")
+
+    store = get_store()
+    runs_a = store.runs(project="proj-a")
+    assert [r.name for r in runs_a] == ["a-run"]
+
+    calls_a = store.calls(project="proj-a")
+    assert len(calls_a) == 1
+    assert calls_a[0].run_id == runs_a[0].id
+
+    assert len(store.runs()) == 2
+    assert len(store.calls()) == 2
+
+
 def test_migrate_adds_missing_column_to_preexisting_table():
     """Simulates a `.praximetry.db` on disk from before `parent_call_id` existed:
     a `calls` table missing that column, created outside of `Store` so
