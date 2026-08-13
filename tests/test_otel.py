@@ -1,5 +1,5 @@
 """OpenTelemetry ingestion: attribute mapping across conventions + live spans."""
-from praximetry import otel
+from praximetry import config, otel
 from praximetry.store import get_store
 
 
@@ -12,10 +12,10 @@ def test_map_gen_ai_semconv():
         "gen_ai.usage.input_tokens": 120,
         "gen_ai.usage.output_tokens": 30,
     })
-    assert call.provider == "openai" and call.model == "gpt-4o"
-    assert call.input_tokens == 120 and call.output_tokens == 30
-    assert call.cost_usd > 0
-    assert call.metadata["source"] == "otel"
+    assert call["provider"] == "openai" and call["model"] == "gpt-4o"
+    assert call["input_tokens"] == 120 and call["output_tokens"] == 30
+    assert call["cost_usd"] > 0
+    assert call["metadata"]["source"] == "otel"
 
 
 def test_map_openinference_convention():
@@ -25,8 +25,8 @@ def test_map_openinference_convention():
         "llm.token_count.prompt": 50,
         "llm.token_count.completion": 8,
     })
-    assert call.model == "claude-sonnet-5" and call.provider == "anthropic"
-    assert call.input_tokens == 50 and call.output_tokens == 8
+    assert call["model"] == "claude-sonnet-5" and call["provider"] == "anthropic"
+    assert call["input_tokens"] == 50 and call["output_tokens"] == 8
 
 
 def test_map_traceloop_prompt_tokens_alias():
@@ -35,7 +35,7 @@ def test_map_traceloop_prompt_tokens_alias():
         "gen_ai.usage.prompt_tokens": 200,
         "gen_ai.usage.completion_tokens": 40,
     })
-    assert call.input_tokens == 200 and call.output_tokens == 40
+    assert call["input_tokens"] == 200 and call["output_tokens"] == 40
 
 
 def test_span_name_becomes_stage():
@@ -43,7 +43,7 @@ def test_span_name_becomes_stage():
         "gen_ai.request.model": "gpt-4o",
         "gen_ai.usage.input_tokens": 10, "gen_ai.usage.output_tokens": 2,
     })
-    assert call.stage == "summarize_node"  # framework node name -> stage
+    assert call["stage"] == "summarize_node"  # framework node name -> stage
 
 
 def test_operation_name_overrides_stage():
@@ -51,7 +51,7 @@ def test_operation_name_overrides_stage():
         "gen_ai.operation.name": "classify",
         "gen_ai.request.model": "gpt-4o",
     })
-    assert call.stage == "classify"
+    assert call["stage"] == "classify"
 
 
 def test_non_llm_span_ignored():
@@ -68,6 +68,20 @@ def test_record_spans_persists():
     assert n == 1
     calls = get_store().calls()
     assert len(calls) == 1 and calls[0].stage == "generate" and calls[0].provider == "otel"
+
+
+def test_record_spans_honors_disabled_config():
+    """OTel ingestion must route through runtime.record_call, which gates on
+    get_config().enabled — a disabled config should silently drop the span,
+    not persist it (this was the bug: otel.py called store.save_call directly).
+    """
+    config.get_config().enabled = False
+    otel.record_spans([
+        {"name": "generate", "attributes": {
+            "gen_ai.request.model": "gpt-4o",
+            "gen_ai.usage.input_tokens": 100, "gen_ai.usage.output_tokens": 20}},
+    ])
+    assert get_store().calls() == []
 
 
 # -- live span through a real TracerProvider ---------------------------------

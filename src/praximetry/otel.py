@@ -20,8 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import pricing
-from .models import Call
-from .runtime import current_run
+from .runtime import record_call
 
 # Attribute aliases across the common conventions (OTel GenAI semconv,
 # OpenInference, OpenLLMetry/traceloop). First match wins.
@@ -57,8 +56,8 @@ def is_genai_span(attrs: dict[str, Any]) -> bool:
     return any(k.startswith(("gen_ai.", "llm.")) for k in attrs)
 
 
-def map_span(name: str, attributes: dict[str, Any]) -> Call | None:
-    """Map one span's attributes onto a Call, or None if it isn't an LLM span."""
+def map_span(name: str, attributes: dict[str, Any]) -> dict[str, Any] | None:
+    """Map one span's attributes onto Call fields, or None if it isn't an LLM span."""
     if not is_genai_span(attributes):
         return None
     model = str(_first(attributes, _MODEL, "unknown"))
@@ -67,9 +66,7 @@ def map_span(name: str, attributes: dict[str, Any]) -> Call | None:
     tout = _int(_first(attributes, _OUT_TOKENS, 0))
     # Span name is the framework's node/step name -> natural stage attribution.
     stage = str(_first(attributes, ("gen_ai.operation.name",), name) or name)
-    run = current_run()
-    return Call(
-        run_id=run.id if run else "otel",
+    return dict(
         stage=stage,
         provider=provider,
         model=model,
@@ -84,14 +81,11 @@ def map_span(name: str, attributes: dict[str, Any]) -> Call | None:
 
 def record_spans(spans: list[dict[str, Any]]) -> int:
     """Ingest a list of {name, attributes} span dicts. Returns count recorded."""
-    from .store import get_store
-
-    store = get_store()
     n = 0
     for s in spans:
-        call = map_span(s.get("name", "span"), s.get("attributes", {}) or {})
-        if call is not None:
-            store.save_call(call)
+        fields = map_span(s.get("name", "span"), s.get("attributes", {}) or {})
+        if fields is not None:
+            record_call(**fields)
             n += 1
     return n
 
@@ -106,17 +100,15 @@ def make_span_processor():
             "Install with: pip install 'praximetry[otel]'"
         ) from e
 
-    from .store import get_store
-
     class PraximetrySpanProcessor(SpanProcessor):
         def on_start(self, span, parent_context=None):  # noqa: D401
             pass
 
         def on_end(self, span) -> None:
             attrs = dict(span.attributes or {})
-            call = map_span(span.name, attrs)
-            if call is not None:
-                get_store().save_call(call)
+            fields = map_span(span.name, attrs)
+            if fields is not None:
+                record_call(**fields)
 
         def shutdown(self) -> None:
             pass
