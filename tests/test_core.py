@@ -1,10 +1,11 @@
 """Core: pricing, store, decorators, recording."""
 import asyncio
+import sqlite3
 
 import praximetry
-from praximetry import pricing
+from praximetry import config, pricing
 from praximetry.runtime import STAGE_REGISTRY, record_call, run_context
-from praximetry.store import get_store
+from praximetry.store import Store, get_store
 
 
 def test_pricing_known_and_prefix():
@@ -59,6 +60,32 @@ def test_store_runs_reader():
     runs = get_store().runs(limit=1)
     assert runs[0].id == run.id
     assert runs[0].name == "triage"
+
+
+def test_migrate_adds_missing_column_to_preexisting_table():
+    """Simulates a `.praximetry.db` on disk from before `parent_call_id` existed:
+    a `calls` table missing that column, created outside of `Store` so
+    `CREATE TABLE IF NOT EXISTS` can't paper over it. `Store()` must ALTER it
+    in on open, generically, from the `_TABLES` declaration alone."""
+    db_path = config.get_config().db_path
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """CREATE TABLE calls (
+            id TEXT PRIMARY KEY, run_id TEXT, stage TEXT, provider TEXT, model TEXT,
+            messages TEXT, response_text TEXT,
+            input_tokens INTEGER, output_tokens INTEGER, cost_usd REAL, latency_ms REAL,
+            ts REAL, error TEXT, metadata TEXT
+        )"""
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(db_path)
+    cols = {row[1] for row in store._conn().execute("PRAGMA table_info(calls)").fetchall()}
+    assert "parent_call_id" in cols
+
+    with run_context(name="post-migration"):
+        record_call(provider="fake", model="gpt-4o", stage="plan")
 
 
 def test_parent_call_id_chains_sequential_calls():
