@@ -7,6 +7,7 @@ variants without touching user code.
 from __future__ import annotations
 
 import time
+from contextlib import contextmanager
 from typing import Any, Callable
 
 from .. import pricing
@@ -15,6 +16,29 @@ from .providers import PROVIDERS, ProviderSpec
 from .wrap import AsyncStreamWrapper, SyncStreamWrapper
 
 _patched: set[str] = set()
+
+# Pre-flight capture hook (PRA-66): when set, patched create()/acreate()
+# wrappers call this INSTEAD of the real `original(...)`, so
+# `praximetry.eval.capture` can intercept requests that go through an
+# `auto_instrument()`-patched SDK client, not just direct `record_call` use.
+# The hook is expected to raise to unwind the call stack before any network
+# contact happens.
+_capture_hook: Callable[[dict], Any] | None = None
+
+
+@contextmanager
+def capturing(hook: Callable[[dict], Any]):
+    """Route the next patched SDK call(s) to `hook` instead of the real API.
+
+    `hook` receives {"provider", "model", "messages", "tools"} and is
+    expected to raise to halt execution before `original(...)` is invoked.
+    """
+    global _capture_hook
+    prev, _capture_hook = _capture_hook, hook
+    try:
+        yield
+    finally:
+        _capture_hook = prev
 
 
 def auto_instrument() -> list[str]:
@@ -70,6 +94,9 @@ def _instrument(original: Callable, provider: str, get_messages, response_extrac
         async def acreate(self: Any, *args: Any, **kwargs: Any) -> Any:
             kwargs = _apply_overrides(kwargs, messages_key)
             model, messages = kwargs.get("model", "unknown"), get_messages(kwargs)
+            if _capture_hook is not None:
+                return _capture_hook({"provider": provider, "model": model,
+                                       "messages": messages, "tools": kwargs.get("tools", [])})
             t0 = time.perf_counter()
             if force_stream or kwargs.get("stream"):
                 resp = await original(self, *args, **kwargs)
@@ -89,6 +116,9 @@ def _instrument(original: Callable, provider: str, get_messages, response_extrac
     def create(self: Any, *args: Any, **kwargs: Any) -> Any:
         kwargs = _apply_overrides(kwargs, messages_key)
         model, messages = kwargs.get("model", "unknown"), get_messages(kwargs)
+        if _capture_hook is not None:
+            return _capture_hook({"provider": provider, "model": model,
+                                   "messages": messages, "tools": kwargs.get("tools", [])})
         t0 = time.perf_counter()
         if force_stream or kwargs.get("stream"):
             resp = original(self, *args, **kwargs)
