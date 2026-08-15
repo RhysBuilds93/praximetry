@@ -193,37 +193,37 @@ graph LR
 ```
 
 The graph shape above only shows *which* nodes connect, not the subtask
-routing or execution order. Both are visible in the sequence below:
+routing or execution order. Both are visible in the layered graph below —
+still a graph view (not a trace/sequence view), since that's what
+`/api/network` actually renders:
 
 ```mermaid
-sequenceDiagram
-    participant H as handle()
-    participant S as supervisor
-    participant B as billing_agent
-    participant T as technical_agent
-    participant G as general_agent
-    participant Y as synthesize
-
-    H->>S: request
-    S-->>H: domains (1-3 matched)
-    par subtask
-        H->>B: subtask
-        B-->>H: finding
-    and subtask
-        H->>T: subtask
-        T-->>H: finding
-    and subtask
-        H->>G: subtask
-        G-->>H: finding
+graph TD
+    R[request] -->|1| A[supervisor]
+    A -->|"2: subtask"| B[billing_agent]
+    A -->|"2: subtask"| C[technical_agent]
+    A -->|"2: subtask"| D[general_agent]
+    subgraph "layer 2 — concurrent"
+        B
+        C
+        D
     end
-    H->>Y: request + findings
-    Y-->>H: reply
+    B -->|"3: finding"| E[synthesize]
+    C -->|"3: finding"| E
+    D -->|"3: finding"| E
 ```
 
-The `par` block only includes the agents whose domain actually matched
-(1-3 of the 3, not always all 3) — same "up to four outgoing edges"
-variability called out below, just shown as concurrent lifelines instead
-of a fixed node set.
+Edge labels are step numbers (1 = supervisor classifies, 2 = concurrent
+subtask delegation, 3 = findings merge), and the `subgraph` groups the
+agents that actually run concurrently — same layering `assign_layers`
+computes for `/api/network`. Only the agents whose domain matched appear
+(1-3 of the 3, not always all 3).
+
+**This diagram is the intended logical flow, not the literal render:**
+per the gather/join note above, `/api/network` never actually draws a
+`*_agent -> synthesize` edge (the merge call is parented to `supervisor`,
+not to any one agent) — the `B/C/D -> E` edges above exist here to show
+where the findings logically go, not what the dashboard draws.
 
 Workflow: `supervisor_delegation`. Distinct from fan-out+join because the
 *set* of children invoked varies per run (1-3 of the 3 agents), not fixed.
