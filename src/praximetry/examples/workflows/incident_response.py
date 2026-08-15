@@ -230,7 +230,12 @@ async def handle(incident: str) -> str:
     for _ in range(MAX_REVISIONS):
         draft = draft_postmortem(incident, correlation, remediation, feedback)
         verdict = critique_postmortem(draft)
-        if verdict.startswith("approve"):
+        # Some providers (e.g. gpt-oss models via Bedrock's OpenAI-compatible
+        # endpoint) prefix every reply with a visible <reasoning>...</reasoning>
+        # block, so the verdict never actually starts with "approve" even when
+        # it ends with it -- a substring check is robust to that, and to a
+        # plain "approve" reply from providers that don't do this.
+        if "approve" in verdict.lower():
             break
         feedback = verdict
     publish_postmortem(draft)
