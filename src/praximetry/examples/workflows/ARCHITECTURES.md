@@ -193,56 +193,47 @@ graph LR
 ```
 
 The graph shape above only shows *which* nodes connect, not the subtask
-each agent completes or the actual playback order. Both are visible in
-the layered graph below — still a graph view (not a trace/sequence
-view), since that's what `/api/network` *and* the Observe "playback"
-replay both actually render:
+each agent completes or the actual run order. The layered graph below
+shows the **intended, single-domain case** — most real requests match
+one domain, not three, so this is the common trace, not the maximal
+fan-out — still a graph view (not a trace/sequence view), matching what
+`/api/network` and the Observe "playback" replay both render:
 
 ```mermaid
 graph TD
-    R[request] -->|"step 1: classify"| A[supervisor]
+    R["request\n(e.g. \"My invoice shows the wrong amount\")"] -->|"step 1: classify"| A[supervisor]
     A -->|"step 2: diagnose the charge/invoice angle"| B["billing_agent<br/>one-line finding"]
-    A -->|"step 2: diagnose the app/error angle"| C["technical_agent<br/>one-line finding"]
-    A -->|"step 2: diagnose the catch-all angle"| D["general_agent<br/>one-line finding"]
-    A -->|"step 2: merge findings"| E["synthesize<br/>(waits on B/C/D's results,\nbut structurally a sibling of them)"]
-    subgraph "step 2 / playback frame 2 — all flagged concurrent, incl. synthesize"
-        B
-        C
-        D
-        E
-    end
+    B -->|"step 3: merge findings"| E[synthesize]
 ```
 
-Edge labels are step numbers (step 1 = supervisor classifies, step 2 =
-everything that ran after it). Every agent runs the *same* prompt shape
-(`_agent()`'s factory: "give a one-line finding for: {request}") — the
-domain-specific task each one completes comes only from *which* agent
-got invoked, not a different prompt template, so the step-2 edge labels
-spell out what each agent's fixed role actually diagnoses. Only the
-agents whose domain matched appear (1-3 of the 3, not always all 3).
+When more than one domain matches (e.g. "charged twice and the app also
+keeps crashing" → `billing` + `technical`), steps 2 branches concurrently
+across the matched agents before step 3, same shape as the original
+`graph LR` above. Every agent runs the *same* prompt shape (`_agent()`'s
+factory: "give a one-line finding for: {request}") — the domain-specific
+task each one completes comes only from *which* agent got invoked, not a
+different prompt template, so the step-2 edge label spells out what that
+agent's fixed role actually diagnoses.
 
-**`synthesize` is not step 3 — it shares step 2's frame with the agents,
-both in `/api/network`'s layering and in playback's frame grouping, and
-that's the point of drawing it this way rather than the 3-step flow the
-source code's `await supervisor(...)` / `gather(...)` / `synthesize(...)`
-sequence would suggest.** Per the gather/join note above, `synthesize`'s
-`Call.parent_call_id` is `supervisor`, exactly like the three agents',
-because `asyncio.gather`'s spawned tasks copy `contextvars.Context`
-outward but never back — so nothing marks `synthesize` as downstream of
-the agents it actually waited on. The dashboard's playback frame-builder
-(`pbGraph` in `dashboard/static/index.html`) tries to detect a
-"join" call and give it its own later frame, but only for a sibling that
-itself *has children* (`kids[c.id].length>0`) — `synthesize` is a leaf,
-so it never qualifies, and playback's ambiguous-case fallback ("treat
-every child as concurrent") puts it in the same frame as `billing_agent`/
-`technical_agent`/`general_agent`. Concretely: playback on a real run of
-this workflow shows **2 steps**, not 3 — `"Step 2 / 2 · N in parallel"`
-where N includes `synthesize` alongside whichever agents matched, never
-a distinct "Step 3" for the merge. `/api/network`'s `graph LR` above
-reflects the same fact via `synthesize`'s edge sharing `supervisor`'s
-layer and being flagged `concurrent`. Anything testing this workflow's
-render against these diagrams should assert **2 layers/frames, 4-way
-concurrency on the second (when all 3 domains match)** — not 3.
+**Known gap — playback does not currently render the 3-step trace shown
+above.** `synthesize`'s `Call.parent_call_id` is `supervisor`, same as
+`billing_agent`'s, because `asyncio.gather`'s spawned Task copies
+`contextvars.Context` outward but never back, so nothing marks
+`synthesize` as structurally downstream of the agent(s) it waited on —
+true even in this single-domain case, where `Call` timestamps are in
+fact fully sequential (`supervisor.ts < billing_agent.ts <
+synthesize.ts`, no real concurrency). The dashboard's playback
+frame-builder (`pbGraph` in `dashboard/static/index.html`) only carves
+a sibling out as its own later frame ("the join") if that sibling
+*itself has children* (`kids[c.id].length>0`); `synthesize` is always a
+leaf, so it never qualifies, and playback's ambiguous-case fallback
+groups it into `billing_agent`'s frame regardless of domain count. As a
+result, playback on a real run currently shows **2 steps, not 3** — no
+distinct "merge" step ever appears. Tracked as
+[PRA-90](https://linear.app/praximetry/issue/PRA-90/playback-frame-grouping-mislabels-sequential-single-leg-joins-as);
+this diagram documents the *intended* 3-step trace, not (yet) the
+literal render — update this note once PRA-90 ships and re-verify the
+step count against a real playback run.
 
 Workflow: `supervisor_delegation`. Distinct from fan-out+join because the
 *set* of children invoked varies per run (1-3 of the 3 agents), not fixed.
