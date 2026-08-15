@@ -199,25 +199,30 @@ still a graph view (not a trace/sequence view), since that's what
 
 ```mermaid
 graph TD
-    R[request] -->|1| A[supervisor]
-    A -->|"2: subtask"| B[billing_agent]
-    A -->|"2: subtask"| C[technical_agent]
-    A -->|"2: subtask"| D[general_agent]
+    R[request] -->|"1: classify"| A[supervisor]
+    A -->|"2: diagnose the charge/invoice angle"| B["billing_agent<br/>one-line finding"]
+    A -->|"2: diagnose the app/error angle"| C["technical_agent<br/>one-line finding"]
+    A -->|"2: diagnose the catch-all angle"| D["general_agent<br/>one-line finding"]
     subgraph "layer 2 — concurrent"
         B
         C
         D
     end
-    B -->|"3: finding"| E[synthesize]
-    C -->|"3: finding"| E
-    D -->|"3: finding"| E
+    B -->|"3: billing finding"| E[synthesize]
+    C -->|"3: technical finding"| E
+    D -->|"3: general finding"| E
 ```
 
 Edge labels are step numbers (1 = supervisor classifies, 2 = concurrent
-subtask delegation, 3 = findings merge), and the `subgraph` groups the
-agents that actually run concurrently — same layering `assign_layers`
-computes for `/api/network`. Only the agents whose domain matched appear
-(1-3 of the 3, not always all 3).
+subtask delegation, 3 = findings merge). Every agent runs the *same*
+prompt shape (`_agent()`'s factory: "give a one-line finding for:
+{request}") — the domain-specific task each one completes comes only
+from *which* agent got invoked, not a different prompt template, so the
+step-2 edge labels above spell out what each agent's fixed role actually
+diagnoses. The `subgraph` groups the agents that actually run
+concurrently — same layering `assign_layers` computes for `/api/network`.
+Only the agents whose domain matched appear (1-3 of the 3, not always all
+3).
 
 **This diagram is the intended logical flow, not the literal render:**
 per the gather/join note above, `/api/network` never actually draws a
