@@ -1,7 +1,4 @@
-"""Workflow: multi-turn tool use -- decide_action and call_tool alternate
-until the model says done, bounded by MAX_TURNS.
-
-Try:
+"""Try:
     python -m praximetry.examples.workflows.tool_use_loop
 """
 import praximetry as px

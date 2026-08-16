@@ -1,7 +1,4 @@
-"""Workflow: supervisor delegating to 1-3 of billing_agent/technical_agent/
-general_agent concurrently, then synthesize merges their outputs.
-
-Try:
+"""Try:
     python -m praximetry.examples.workflows.supervisor_delegation
 """
 import asyncio

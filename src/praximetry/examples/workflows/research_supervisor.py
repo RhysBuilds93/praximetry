@@ -1,8 +1,4 @@
-"""Workflow: LangGraph research supervisor -- dispatches to specialist
-agents (web/kb/competitor/sentiment/data researcher), each its own bounded
-tool-calling loop, then finalize_report.
-
-Try:
+"""Try:
     python -m praximetry.examples.workflows.research_supervisor
 """
 from __future__ import annotations

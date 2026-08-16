@@ -1,8 +1,4 @@
-"""Workflow: RAG -- embed_query/vector_search are non-LLM stages
-(bag-of-words vectors, cosine similarity over an in-memory corpus); only
-generate calls a model.
-
-Try:
+"""Try:
     python -m praximetry.examples.workflows.rag_retrieval
 """
 import math
