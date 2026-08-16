@@ -86,3 +86,56 @@ def test_openai_accumulate_and_finalize():
     out = adapter.finalize_stream(state)
     assert out.output_text == "hello"
     assert out.tokens_in == 4 and out.tokens_out == 2
+
+
+from praximetry.instrument.adapters import AnthropicAdapter
+
+
+def test_anthropic_adapter_registered():
+    assert isinstance(ADAPTERS["anthropic"], AnthropicAdapter)
+
+
+def test_anthropic_parse_response_text_only():
+    from anthropic.types import Message, TextBlock, Usage
+
+    msg = Message(
+        id="x", model="claude-sonnet-5", role="assistant", type="message",
+        stop_reason="end_turn", stop_sequence=None,
+        content=[TextBlock(type="text", text="hi there")],
+        usage=Usage(input_tokens=7, output_tokens=2),
+    )
+    out = AnthropicAdapter().parse_response(msg, "claude-sonnet-5")
+    assert out.output_text == "hi there"
+    assert out.reasoning_text == ""
+
+
+def test_anthropic_parse_response_thinking_block():
+    from anthropic.types import Message, TextBlock, ThinkingBlock, Usage
+
+    msg = Message(
+        id="x", model="claude-sonnet-5", role="assistant", type="message",
+        stop_reason="end_turn", stop_sequence=None,
+        content=[
+            ThinkingBlock(type="thinking", thinking="let me work through this", signature="sig"),
+            TextBlock(type="text", text="the answer is 4"),
+        ],
+        usage=Usage(input_tokens=7, output_tokens=9),
+    )
+    out = AnthropicAdapter().parse_response(msg, "claude-sonnet-5")
+    assert out.output_text == "the answer is 4"
+    assert out.reasoning_text == "let me work through this"
+
+
+def test_anthropic_parse_response_tool_use():
+    from anthropic.types import Message, ToolUseBlock, Usage
+
+    msg = Message(
+        id="x", model="claude-sonnet-5", role="assistant", type="message",
+        stop_reason="tool_use", stop_sequence=None,
+        content=[ToolUseBlock(type="tool_use", id="tu_1", name="lookup", input={"q": "weather"})],
+        usage=Usage(input_tokens=7, output_tokens=5),
+    )
+    out = AnthropicAdapter().parse_response(msg, "claude-sonnet-5")
+    assert out.output_text == ""
+    assert out.tool_calls[0].name == "lookup"
+    assert out.tool_calls[0].arguments == {"q": "weather"}
