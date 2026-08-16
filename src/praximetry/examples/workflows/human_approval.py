@@ -1,12 +1,5 @@
-"""Workflow: human-in-the-loop approval.
-
-`draft_action` proposes an action, `await_approval` is a non-LLM stage
-that resolves a pending decision (the same two-phase pattern the
-dashboard's own Expert Input review queue already uses -- a decision made
-outside the model, still attributed as a stage), and the outcome branches
-to `execute` or `discard`. The "human" decision is a deterministic policy
-scanning the proposed action for destructive keywords rather than a real
-pause, so runs stay reproducible -- swap `await_approval` for an actual
+"""Workflow: human-in-the-loop approval -- await_approval is a deterministic
+stand-in for a human reviewer (keeps runs reproducible); swap for a real
 pending-decision store to make it a genuine pause/resume in production.
 
 Try:
@@ -38,8 +31,6 @@ def await_approval(action: str) -> str:
     actions (delete/purge/drop/remove) are rejected; everything else is approved."""
     low = action.lower()
     result = "rejected" if any(k in low for k in DESTRUCTIVE_KEYWORDS) else "approved"
-    # Record as a zero-cost non-LLM call to maintain call graph structure
-    # without masquerading as a paid model invocation.
     runtime.record_call(response_text=result, cost_usd=0)
     return result
 

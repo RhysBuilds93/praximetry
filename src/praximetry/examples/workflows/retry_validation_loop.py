@@ -1,14 +1,5 @@
-"""Workflow: a standalone retry/validation loop.
-
-Isolated from `incident_response`'s composite shape so the loop itself can
-be verified without the branch/fan-out noise: `generate` produces a JSON
-reply, `validate` (non-LLM) checks it actually parses and has the required
-keys, and on failure the loop calls `generate` again with the validator's
-feedback -- a genuine cycle in the call graph, bounded by `MAX_ATTEMPTS`.
-The first attempt deliberately asks for a plain-English status line rather
-than JSON, so the loop reliably needs at least one retry; the retry prompt
-then asks for the strict JSON schema, using the validator's feedback as
-the correction signal.
+"""Workflow: retry/validation loop -- generate produces JSON, validate checks
+it, failures retry with feedback up to MAX_ATTEMPTS.
 
 Try:
     python -m praximetry.examples.workflows.retry_validation_loop
@@ -50,8 +41,6 @@ def validate(draft: str) -> str:
         else:
             result = "valid"
 
-    # Record as a zero-cost non-LLM call to maintain call graph structure
-    # without masquerading as a paid model invocation.
     runtime.record_call(response_text=result, cost_usd=0)
     return result
 

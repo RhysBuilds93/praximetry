@@ -23,8 +23,6 @@ _overrides: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextV
 
 STAGE_REGISTRY: dict[str, Callable[..., Any]] = {}  # so eval/optimize can re-run stages by name
 
-# Extension point for external tooling (e.g. praximetry-cloud's applied policy) to make
-# @stage-decorated functions pick up a computed policy transparently. No-op unless registered.
 _policy_hook: Callable[[str], ContextManager[None]] | None = None
 
 

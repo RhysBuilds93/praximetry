@@ -1,11 +1,5 @@
-"""Workflow: a standalone branching router.
-
-`classify_request` genuinely determines which stage runs next -- unlike
-`support_triage` (which always runs the same fixed chain regardless of
-category), this workflow's call graph itself branches: `classify_request`
-has three possible successors across runs, only one of which fires for any
-given request. That is the shape the Observe graph must render as a fanned
-node with alternative children.
+"""Workflow: branching router -- classify_request fans to exactly one of
+route_billing/route_technical/route_general per run.
 
 Try:
     python -m praximetry.examples.workflows.branching_router
