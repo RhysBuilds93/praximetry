@@ -1,4 +1,4 @@
-"""Auto-instrumentation: monkey-patch OpenAI, Anthropic, and LiteLLM SDKs.
+"""Auto-instrumentation: monkey-patch OpenAI, Anthropic, LiteLLM, and Gemini SDKs.
 
 Covers sync + async and buffered + streaming calls. Experiment overrides
 (model swap, prompt transform) are applied in-flight so the optimizer can trial
