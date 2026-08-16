@@ -50,10 +50,12 @@ class CapturedRequest(BaseModel):
 
 
 class CaptureError(RuntimeError):
-    pass
+    """Capture could not produce a request shape for this example."""
 
 
 class _CaptureSignal(Exception):
+    """Internal control-flow signal carrying the intercepted call kwargs."""
+
     def __init__(self, kwargs: dict[str, Any]):
         self.kwargs = kwargs
 

@@ -15,7 +15,7 @@ def test_providers_cover_all_four():
 
 
 def test_patchers_apply_to_real_classes():
-    assert P.auto_instrument()
+    assert P.auto_instrument()  # patches whatever is importable
     from anthropic.resources.messages import Messages
     from openai.resources.chat.completions import AsyncCompletions, Completions
 
@@ -106,7 +106,7 @@ def test_anthropic_streaming_events():
     stream = create(
         None, model="claude-sonnet-5", messages=[{"role": "user", "content": "hi"}], stream=True
     )
-    list(stream)
+    list(stream)  # consume so instrumentation finalizes the call
     c = get_store().calls()[0]
     assert c.output_text == "foobar" and c.input_tokens == 12 and c.output_tokens == 5
 

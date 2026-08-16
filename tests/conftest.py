@@ -37,7 +37,7 @@ class FakeLLM:
         self, responses: dict[str, str] | None = None, degrade: dict[str, str] | None = None
     ):
         self.responses = responses or {}
-        self.degrade = degrade or {}
+        self.degrade = degrade or {}  # model -> forced (wrong) answer
 
     def chat(self, model: str, messages: list[dict], expected_key: str = "") -> str:
         ov = runtime.get_overrides() or {}

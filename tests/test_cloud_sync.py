@@ -97,7 +97,7 @@ def test_queue_full_drops_and_logs_without_raising(stub, caplog):
 
     with caplog.at_level(logging.WARNING, logger="praximetry.cloud_sync"):
         cloud_sync.enqueue(call1)
-        cloud_sync.enqueue(call2)
+        cloud_sync.enqueue(call2)  # queue full -> dropped, must not raise
 
     assert any("dropped" in r.message.lower() for r in caplog.records)
 
@@ -110,6 +110,7 @@ def test_network_down_does_not_raise_and_worker_survives():
     cloud_sync.note_run(run)
     cloud_sync.enqueue(call)
 
+    # Must not raise even though the server is unreachable.
     cloud_sync.flush_now()
 
     assert cloud_sync.is_running() is True
@@ -122,11 +123,11 @@ def test_worker_recovers_after_network_failure(stub):
     run, call1 = _make_run_and_call()
     cloud_sync.note_run(run)
     cloud_sync.enqueue(call1)
-    cloud_sync.flush_now()
+    cloud_sync.flush_now()  # fails silently, dead client
 
     app, http = stub
     working_client = CloudClient("", VALID_KEY, client=http)
-    cloud_sync.start(working_client)
+    cloud_sync.start(working_client)  # swap in a working client
 
     _, call2 = _make_run_and_call()
     call2.run_id = run.id

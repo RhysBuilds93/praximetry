@@ -55,7 +55,7 @@ def test_span_name_becomes_stage():
             "gen_ai.usage.output_tokens": 2,
         },
     )
-    assert call.stage == "summarize_node"
+    assert call.stage == "summarize_node"  # framework node name -> stage
 
 
 def test_operation_name_overrides_stage():
@@ -88,7 +88,7 @@ def test_non_llm_span_ignored():
 def test_record_spans_persists():
     n = otel.record_spans(
         [
-            {"name": "retrieve", "attributes": {"db.system": "pg"}},
+            {"name": "retrieve", "attributes": {"db.system": "pg"}},  # ignored
             {
                 "name": "generate",
                 "attributes": {

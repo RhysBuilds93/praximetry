@@ -218,7 +218,8 @@ def _run_agent(name: str, request: str) -> str:
 
 
 def _agent_dispatch_stage(name: str):
-    """Keep the stage wrapper separate so dispatch can restore runtime context."""
+    """@px.stage-wrapped dispatch call, separate from the @tool wrapper so dispatch_node
+    can call it directly under runtime.restore_context (see dispatch_node)."""
 
     @px.stage(name)
     def call(request: str) -> str:
@@ -289,7 +290,7 @@ def supervisor_node(state: ResearchState) -> dict:
 
 
 def dispatch_node(state: ResearchState) -> dict:
-    """Restore captured context before each concurrent specialist dispatch."""
+    """Hand-rolled vs. ToolNode so each concurrent dispatch restores px context first."""
     last = state["messages"][-1]
     calls = [c for c in last.tool_calls if c["name"] != "finalize_report"]
     ctx = state.get("_px_ctx")

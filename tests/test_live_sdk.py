@@ -165,6 +165,7 @@ def test_override_rewrites_model_through_real_client():
 
     with override_context(model="gpt-4o-mini"):
         client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
+    # The override changed the model actually sent over the wire.
     assert seen["model"] == "gpt-4o-mini"
     assert get_store().calls()[0].model == "gpt-4o-mini"
 

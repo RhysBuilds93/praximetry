@@ -177,6 +177,10 @@ def _instrument(
 
 
 def _self_less(orig: Callable) -> Callable:
+    """Wrap a module-level function (no `self`) so `_instrument()` can treat
+    it like a class method. This is needed for litellm.completion/
+    acompletion, which have no bound receiver."""
+
     def with_self(_self: Any, *a: Any, **k: Any) -> Any:
         return orig(*a, **k)
 

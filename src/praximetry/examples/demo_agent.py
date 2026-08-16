@@ -1,4 +1,6 @@
-"""Offline support-ticket pipeline using a simulated LLM.
+"""Demo agent: a tiny support-ticket pipeline instrumented with praximetry.
+
+Runs fully offline (simulated LLM) so you can explore recorded traffic without keys:
 
 python -m praximetry.examples.demo_agent     # generates traffic into .praximetry/
 praximetry summary

@@ -45,7 +45,9 @@ INDEX: dict[str, str] = {
     "neil_armstrong.birth_state": "Ohio",
     "ohio.capital": "Columbus",
 }
+# Retrieval index the tools search. Stands in for web + file search.
 
+# Questions the planner decomposes for real against INDEX.
 QUESTIONS: list[str] = [
     "In which year did the company that acquired DeepMind go public?",
     "What is the capital of the country where Python's creator was born?",
@@ -80,6 +82,7 @@ def decompose(question: str) -> list[str]:
 
 @px.stage("lookup")
 def lookup(hops: list[str]) -> list[str]:
+    """Non-LLM retrieval tool. Returns evidence lines the model can cite."""
     return [f"- {h} = {INDEX[h]}" for h in hops if h in INDEX]
 
 

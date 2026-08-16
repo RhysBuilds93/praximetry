@@ -24,6 +24,7 @@ class Config:
         return cfg
 
 
+# Set by praximetry.init(); read by instrumentation.
 _config: Config | None = None
 
 

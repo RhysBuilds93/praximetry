@@ -351,5 +351,6 @@ def get_store() -> Store:
 
 
 def reset_store() -> None:
+    """Testing hook: force re-open against current config."""
     global _store
     _store = None
