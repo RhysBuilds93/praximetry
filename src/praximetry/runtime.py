@@ -12,32 +12,19 @@ from .models import Call, Run
 from .store import get_store
 
 _current_run: contextvars.ContextVar[Run | None] = contextvars.ContextVar("run", default=None)
-# Stack of active stage names, outermost first, so a nested @stage call (e.g.
-# "summarize" calling "extract") records the full path ("summarize>extract")
-# rather than losing the outer stage. A plain contextvar can't be mutated in
-# place across nested `with` blocks, so each push sets a new tuple and the
-# matching pop resets via the returned token.
 _stage_stack: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
     "stage_stack", default=()
 )
-# The most recently recorded call in this context. asyncio.gather/create_task copy
-# the context into each spawned task, so concurrent fan-out calls all inherit the
-# same parent (whatever call was current just before the gather) automatically —
-# no API change needed in instrumented agent code.
+# Most recently recorded call; asyncio.gather/create_task copy it so fan-out calls inherit the same parent.
 _current_call: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_call", default=None)
-# Experiment overrides applied in-flight by instrumentation:
-#   {"model": str | None, "prompt_transform": Callable[[list[dict]], list[dict]] | None}
 _overrides: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "overrides", default=None
 )
 
-# Stage function registry so eval/optimize can re-run stages by name.
-STAGE_REGISTRY: dict[str, Callable[..., Any]] = {}
+STAGE_REGISTRY: dict[str, Callable[..., Any]] = {}  # so eval/optimize can re-run stages by name
 
-# praximetry has no local optimizer. This is the extension point external tooling
-# (praximetry-cloud's applied policy, or anything else) uses to make @stage-decorated
-# functions transparently pick up a computed policy in production, with no code
-# change. Unset by default: a no-op unless something registers a hook.
+# Extension point for external tooling (e.g. praximetry-cloud's applied policy) to make
+# @stage-decorated functions pick up a computed policy transparently. No-op unless registered.
 _policy_hook: Callable[[str], ContextManager[None]] | None = None
 
 
@@ -95,6 +82,36 @@ def stage_context(name: str):
         _stage_stack.reset(token)
 
 
+def capture_context() -> dict[str, Any]:
+    """Serializable run/stage/call snapshot; carry explicitly across boundaries contextvars
+    don't survive (e.g. LangGraph's per-step executor), restore with restore_context()."""
+    run = _current_run.get()
+    return {
+        "run_id": run.id if run else None,
+        "run_project": run.project if run else None,
+        "stage_stack": _stage_stack.get(),
+        "current_call_id": _current_call.get(),
+    }
+
+
+@contextmanager
+def restore_context(ctx: dict[str, Any] | None):
+    """Re-enter a context captured with capture_context(). No-op if ctx has no run_id."""
+    if not ctx or not ctx.get("run_id"):
+        yield
+        return
+    run = Run(id=ctx["run_id"], project=ctx.get("run_project") or "default")
+    run_token = _current_run.set(run)
+    stage_token = _stage_stack.set(tuple(ctx.get("stage_stack") or ()))
+    call_token = _current_call.set(ctx.get("current_call_id"))
+    try:
+        yield
+    finally:
+        _current_call.reset(call_token)
+        _stage_stack.reset(stage_token)
+        _current_run.reset(run_token)
+
+
 @contextmanager
 def override_context(model: str | None = None, prompt_transform=None):
     token = _overrides.set({"model": model, "prompt_transform": prompt_transform})
@@ -106,7 +123,6 @@ def override_context(model: str | None = None, prompt_transform=None):
 
 @contextmanager
 def policy_scope(stage: str):
-    """Apply the registered policy hook for `stage`, if any (no-op otherwise)."""
     if _policy_hook is None:
         yield
         return

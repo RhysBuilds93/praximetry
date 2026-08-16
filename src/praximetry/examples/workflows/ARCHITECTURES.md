@@ -1,61 +1,31 @@
 # Agent architecture shapes
 
-Every example workflow in this directory, grouped by the distinct
-call-graph *topology* it produces — not by domain. Each entry names the
-workflow(s) demonstrating that shape and the `/api/network` structure a
-correct render must show (see `praximetry-cloud`'s
-`src/praximetry_cloud/dashboard/server.py`'s
-`find_back_edges`/`assign_layers`/the `/api/network` handler for how these
-structural properties — `layer`, `back_arc`, `concurrent`, `passes` — are
-computed; `tests/test_dashboard.py` in that repo only exercises them).
+Example workflows grouped by call-graph *topology*, not domain. See
+`praximetry-cloud`'s `dashboard/server.py` (`find_back_edges`,
+`assign_layers`, `/api/network`) for how `layer`/`back_arc`/`concurrent`
+are computed.
 
-**A stage only produces a graph node if it calls `real_chat` (or
-`runtime.record_call` directly) itself.** A `@praximetry.stage`-decorated
-function that just calls plain Python, or only delegates to other
-`@stage` functions, never emits a `Call` row for its own name — so it
-never appears as a node or an edge endpoint in `/api/network`, no matter
-how the code is organized. Several workflows below use explicit
-zero-cost `runtime.record_call()` calls precisely to keep a genuinely
-non-LLM step visible in the graph (`retry_validation_loop.validate`,
-`tool_use_loop.call_tool`, `human_approval.await_approval`,
-`rag_retrieval.embed_query`/`vector_search`); others don't, and those
-steps are simply invisible to the graph. The counts and shapes below are
-verified against each workflow's actual `real_chat`/`record_call` call
-sites, not just its `@stage` decorator count.
+**Node visibility rule:** a stage only produces a graph node if it calls
+`real_chat`/`record_call` itself. Pure-Python or delegate-only `@stage`
+functions record no `Call` row and never appear — several workflows use
+zero-cost `record_call(cost_usd=0)` specifically to keep a non-LLM step
+visible.
 
-Relatedly, when a `@stage` function is still active while it calls
-another `@stage` function that itself calls `real_chat`, praximetry
-records the inner call's `stage` as the composite path
-`"outer>inner"` (PRA-81) rather than just `"inner"`. The dashboard's
-`_innermost_stage` (`src/praximetry_cloud/dashboard/server.py`) collapses
-that back to `"inner"` for node identity, so this is invisible in the
-rendered graph — but it means an *orchestrating* stage that never calls
-`real_chat` itself (only its children do) also never appears as its own
-node, even though it's a `@stage` function. This affects
-`gaia_multihop.answer`, `tau_retail_agent.handle_request`, and
-`swe_patch_agent.resolve` below — the brief's original draft of this
-catalog assumed every `@stage` function is a node, which is wrong for
-these three.
+**Composite stage paths:** a nested `@stage` call inside an active
+`@stage` records as `"outer>inner"` (PRA-81); the dashboard's
+`_innermost_stage` collapses this to `"inner"` for node identity. An
+orchestrator that only delegates (never calls `real_chat` itself) is
+therefore invisible as a node even though it's `@stage`-decorated.
 
-**A merge call made after `asyncio.gather`, in the orchestrator's own
-frame, is never parented to one of the fanned-out children — it's
-parented to whatever stage last ran in that frame before the gather.**
-`asyncio.Task` copies `contextvars.Context` at task-creation time, so
-mutations inside a gather-spawned Task (including `record_call`'s
-parent-tracking) never propagate back out to the caller. This means a
-"fan-out then join" shape never actually renders a `child -> merge` edge
-in `/api/network`, no matter how the source reads — the merge sits at the
-*same* layer as the fan-out's own parent, not one layer above the
-children. It affects `research_summarizer`, `supervisor_delegation`, and
-`incident_response`'s `gather_signals`/`correlate` pair below; each
-section calls this out explicitly. Compounding this, the dashboard marks
-any edge whose parent has >=2 children sharing that `parent_call_id` as
-`concurrent` (`server.py`'s sibling-count check) — since the merge call
-*is* one of those siblings (same parent, same call frame timing), it gets
-flagged `concurrent` too, which reads as "the merge ran in parallel with
-the workers" even though it strictly followed them. Known, currently
-unfixed cosmetic limitation of the graph render, not a bug in the
-workflows.
+**Gather/join parenting (legacy `asyncio.gather` workflows only):** a
+merge call made in the orchestrator's frame after `gather` parents to
+whatever stage ran *before* the gather, not to any fanned-out child —
+`asyncio.Task` copies context at creation time but never propagates
+mutations back out. So fan-out+join never renders a `child -> merge`
+edge; the merge sits at the fan-out's own layer and gets flagged
+`concurrent` alongside the real siblings (cosmetic, not a bug). Affects
+`research_summarizer`, `supervisor_delegation`, `incident_response`.
+`research_supervisor` (LangGraph) avoids this entirely — see its section.
 
 ## Sequential pipeline
 
@@ -64,67 +34,23 @@ graph LR
     A[stage 1] --> B[stage 2] --> C[stage 3]
 ```
 
-Workflows: `invoice_extraction` (1 stage: `extract_invoice`).
+`invoice_extraction` — 1 real stage (`extract_invoice`).
 
-Expected `/api/network`: each stage a distinct node, exactly one outgoing
-edge per stage, `back_arc: false` and `concurrent: 0` everywhere, layers
-strictly increasing.
-
-## Sequential pipeline, two visible stages (one step is invisible)
+## Sequential pipeline, one step invisible
 
 ```mermaid
 graph LR
     A[stage 1] --> B[stage 2]
 ```
 
-Workflows: `support_triage` (`classify -> respond`), `gaia_multihop`
-(`decompose -> final_answer`), `tau_retail_agent` (`plan_action ->
-write_reply`), `swe_patch_agent` (`localize -> propose_patch`).
-
-Each of these workflows *reads* as a 3-stage pipeline in its source (and
-`support_triage`/`tau_retail_agent`/`swe_patch_agent` each have a third
-`@stage`-decorated function in the middle or at the end), but the
-middle/last step never calls `real_chat` or `record_call`, so it emits no
-`Call` row and never appears in `/api/network`:
-
-- `support_triage.retrieve(category)` — plain dict lookup, no LLM/record call.
-- `gaia_multihop.lookup(hops)` — plain retrieval-index lookup.
-- `tau_retail_agent.execute(action)` — mutates the in-memory order DB directly.
-- `swe_patch_agent.run_tests(path, patch)` — actually execs and runs the
-  repo's tests, but never records the result as a call.
-
-`gaia_multihop.answer`, `tau_retail_agent.handle_request`, and
-`swe_patch_agent.resolve` are themselves `@stage`-decorated wrapper
-functions that only delegate to their child stages — they never call
-`real_chat` directly either, so they *also* never appear as nodes. Their
-children's calls get recorded with composite stage paths
-(`"answer>decompose"`, `"answer>final_answer"`, etc.), which
-`_innermost_stage` collapses to the plain child name for the graph.
-
-Verified empirically by running each workflow's entry point once and
-inspecting `get_store().calls()`: exactly two `Call` rows are produced per
-invocation, one with `parent_call_id: null` (the first stage) and one
-whose `parent_call_id` points at it (the second) — despite three `@stage`
-functions existing in the source for each of these workflows.
-
-Expected `/api/network`: two nodes, one edge, `back_arc: false`,
-`concurrent: 0`, layers strictly increasing. No node for `retrieve`,
-`lookup`, `execute`, `run_tests`, `answer`, `handle_request`, or
-`resolve`.
-
-## Sequential pipeline with fail-fast early exit — not observable in the graph
-
-`swe_patch_agent.resolve` can return `"FAILED"` early (if `localize`
-picks a file outside the known repo, or if `run_tests` comes back
-`"FAIL"`) instead of reaching `"RESOLVED"`. This looked, from the source,
-like it should produce a graph shape distinct from the plain sequential
-pipeline above (a shorter chain on failure). It doesn't: `run_tests` is
-exactly the non-LLM stage described above that never records a `Call`,
-so pass/fail is invisible to `/api/network` either way — every run of
-`resolve` renders as the same two-node `localize -> propose_patch` chain
-regardless of whether the patch actually passed. There is no dedicated
-`/api/network` shape for "fail-fast early exit"; call-graph shape alone
-cannot distinguish a resolved run from a failed one here.
+`support_triage`, `gaia_multihop`, `tau_retail_agent`, `swe_patch_agent`
+each read as 3 stages but the middle/last step (`retrieve`, `lookup`,
+`execute`, `run_tests`) is plain Python — no `Call` row. Their top-level
+`@stage` wrappers (`answer`, `handle_request`, `resolve`) also never
+appear (delegate-only, per the node-visibility rule). Verified: exactly
+2 `Call` rows per run. `swe_patch_agent`'s fail-fast early exit is also
+invisible here — `run_tests` records nothing either way, so pass/fail
+can't be told apart from graph shape alone.
 
 ## Standalone branching router
 
@@ -135,12 +61,8 @@ graph LR
     A --> D[route_general]
 ```
 
-Workflow: `branching_router`. `classify_request` genuinely has three
-possible successors across the corpus.
-
-Expected `/api/network`: `classify_request` has three outgoing edges, each
-`concurrent: 0` (alternatives, not concurrent siblings — each run only
-takes one), the three route stages share a layer.
+`branching_router` — 3 outgoing edges from `classify_request`, each
+`concurrent: 0` (alternatives, one taken per run).
 
 ## Concurrent fan-out + join (map-reduce)
 
@@ -152,17 +74,9 @@ graph LR
     A --> C[synthesize]
 ```
 
-Workflow: `research_summarizer`. `synthesize` is called from `plan`'s
-frame after the `asyncio.gather` over `summarize_chunk`, so — per the
-gather/join note above — its parent is `plan`, not any `summarize_chunk`
-instance; there is no `summarize_chunk -> synthesize` edge.
-
-Expected `/api/network`: `plan -> summarize_chunk` edge has `concurrent`
-equal to the number of chunks (siblings sharing one parent call); `plan
--> synthesize` is a separate edge at the *same* layer as the
-`summarize_chunk` instances (both are `plan`'s direct children), also
-flagged `concurrent` since it shares `plan` as a parent with the other
-edges — not a real concurrency signal here, see the note above.
+`research_summarizer`. Per the gather/join note, `plan -> synthesize`
+sits at the same layer as `plan -> summarize_chunk` and is flagged
+`concurrent` too (no real `summarize_chunk -> synthesize` edge).
 
 ## Standalone retry/validation loop
 
@@ -173,14 +87,8 @@ graph LR
     B -. approve .-> C[done]
 ```
 
-Workflow: `retry_validation_loop`. `validate` is non-LLM but explicitly
-calls `runtime.record_call(cost_usd=0)` so it still shows up as a real
-node in the graph, rather than disappearing the way `support_triage`'s
-`retrieve` does.
-
-Expected `/api/network`: exactly one of the `generate<->validate` edge pair
-has `back_arc: true`; `generate`'s layer stays below every `validate` that
-approves it.
+`retry_validation_loop`. `validate` is non-LLM but records explicitly, so
+it's a real node. One `generate<->validate` edge is `back_arc: true`.
 
 ## Supervisor / multi-agent delegation
 
@@ -192,82 +100,58 @@ graph LR
     A --> E[synthesize]
 ```
 
-The graph shape above only shows *which* nodes connect, not the subtask
-each agent completes or the intended step ordering. The layered graph
-below is the **target playback behavior** — what we want to visually
-verify a fix against, not what the dashboard currently renders (see the
-gap called out below). Still a graph view (not a trace/sequence view),
-matching what `/api/network` and the Observe "playback" replay both
-render:
+`supervisor_delegation`. 1-3 of 3 agents invoked per run (varies, unlike
+fixed fan-out above); `handle()` is a plain function, so agent/synthesize
+`Call.stage` values are unqualified. Per the gather/join note, `synthesize`
+parents to `supervisor`, sharing its layer and `concurrent` flag with
+whichever agents ran.
+
+**Playback pulse-order gap ([PRA-90](https://linear.app/praximetry/issue/PRA-90/playback-frame-grouping-mislabels-sequential-single-leg-joins-as)):**
+frame grouping already matches the target (agents + `synthesize` share
+one frame), but all members currently pulse simultaneously instead of
+`synthesize` pulsing after the agents it depends on — because its
+`parent_call_id` is `supervisor`, same as the agents, with nothing
+marking it downstream. Target: pulse/count each frame in `ts` order.
+Side-panel step list is already correct (sorts by `ts` directly).
+
+## Research supervisor: two-round fan-out + nested tool use
+
+`research_supervisor` — same shape as `supervisor_delegation` scaled up:
+two dispatch rounds instead of one, and each agent is its own bounded
+tool-use loop (3 tools each) rather than a flat call. Rewritten on
+LangGraph; context is threaded explicitly via `runtime.capture_context`/
+`restore_context` carried in graph state (contextvars don't survive
+LangGraph's per-node executor boundary — see `runtime.py`), so unlike
+every `asyncio.gather`-based workflow above, **this one has correct
+parent-child edges with no gather/join caveat**: dispatched agents
+genuinely parent to the `supervisor` call that dispatched them, and each
+round's `supervisor` call parents to the previous one.
 
 ```mermaid
 graph TD
-    R[request] -->|"frame 1: classify"| A[supervisor]
-    A -->|"frame 2: diagnose the charge/invoice angle"| B["billing_agent<br/>one-line finding"]
-    A -->|"frame 2: diagnose the app/error angle"| C["technical_agent<br/>one-line finding"]
-    A -->|"frame 2: diagnose the catch-all angle"| D["general_agent<br/>one-line finding"]
-    subgraph "frame 2 — concurrent agents (1-3 of the 3, whichever matched)"
-        B
-        C
-        D
-    end
-    B -->|"frame 3: merge"| E[synthesize]
-    C -->|"frame 3: merge"| E
-    D -->|"frame 3: merge"| E
+    R[request] -->|frame 1: classify| S[supervisor]
+    S -->|frame 2| WR[web_researcher]
+    S -->|frame 2| KR[kb_researcher]
+    S -->|frame 2| CR[competitor_researcher]
+    WR --> WR1[web_search] --> WR2[fetch_url] --> WR3[extract_facts]
+    S -->|frame 3, gap-fill| SR[sentiment_researcher]
+    S -->|frame 3, gap-fill| DR[data_researcher]
+    WR --> Y[synthesize]
+    KR --> Y
+    CR --> Y
+    SR --> Y
+    DR --> Y
 ```
 
-Three frames: supervisor classifies alone, the matched agents (1-3 of
-the 3) run concurrently, then `synthesize` runs as its own later frame
-once every matched agent has finished. Every agent runs the *same*
-prompt shape (`_agent()`'s factory: "give a one-line finding for:
-{request}") — the domain-specific task each one completes comes only
-from *which* agent got invoked, not a different prompt template, so the
-frame-2 edge labels spell out what that agent's fixed role actually
-diagnoses.
-
-**Gap vs. current behavior, tracked as
-[PRA-90](https://linear.app/praximetry/issue/PRA-90/playback-frame-grouping-mislabels-sequential-single-leg-joins-as):**
-verified against a real recorded run (`supervisor-delegation` project,
-"My invoice shows the wrong amount" — note the classifier actually
-matched all 3 domains for this request, since `_parse_domains` scans the
-classifier's *raw response text* for substring hits, not the request
-itself, so "single-domain" isn't reliably achievable as an example run).
-Replaying that run's actual `Call.parent_call_id`/`ts` data through
-`pbGraph`'s exact algorithm (`dashboard/static/index.html`) gives **2
-frames, not 3**: frame 1 = supervisor, frame 2 = all three agents *and*
-`synthesize` merged together. Root cause: `synthesize`'s
-`Call.parent_call_id` is `supervisor`, same as the agents' — because
-`asyncio.gather`'s spawned Task copies `contextvars.Context` outward but
-never back, nothing marks `synthesize` as structurally downstream of the
-agents it waited on — and `pbGraph`'s join-detection only carves a
-sibling into its own later frame if that sibling *itself has children*
-(`kids[c.id].length>0`); `synthesize` is always a leaf, so it never
-qualifies, and the ambiguous-case fallback groups it with the agents
-regardless of domain count. Concretely, current real playback shows
-`"Step 2/2 · 4 in parallel"`, with the side-panel step list still in
-correct chronological order (it sorts by `ts` independent of frame
-grouping) but the graph's pulse animation and the "N in parallel" label
-both wrongly imply `synthesize` ran concurrently with the agents, not
-after them. The 3-frame diagram above is what PRA-90 should make
-playback actually produce — use it as the visual acceptance check once
-that ships.
-
-Workflow: `supervisor_delegation`. Distinct from fan-out+join because the
-*set* of children invoked varies per run (1-3 of the 3 agents), not fixed.
-`handle()` (the top-level orchestrator) is a plain function, not a
-`@stage` — so unlike `tau_retail_agent`/`swe_patch_agent`/
-`gaia_multihop`, `supervisor`/`*_agent`/`synthesize` calls are not nested
-inside another active stage and their `Call.stage` values are the plain
-names directly, with no composite path to collapse. `synthesize` is
-called from `handle()`'s frame after the `asyncio.gather` over the
-selected agents — per the gather/join note above, that makes its parent
-`supervisor` (the last stage `handle()` itself ran), never one of the
-agents; there is no `*_agent -> synthesize` edge.
-
-Expected `/api/network`: `supervisor` has up to four outgoing edges (the
-1-3 agents that ran, plus `synthesize`), all sharing `supervisor`'s layer
-and all flagged `concurrent` together (see the sibling-count caveat
-above) whenever more than one domain matched.
+Round 1 fans out 2-3 of `web_researcher`/`kb_researcher`/
+`competitor_researcher`; round 2 (0-2 of `sentiment_researcher`/
+`data_researcher`) fills gaps after seeing round 1's findings; then
+`synthesize`. Each agent's 3 tools chain sequentially underneath it
+(shown once, for `web_researcher`, representative of all five) with
+composite stage paths (`"{agent}>{tool}"`) collapsing to the tool node.
+Verified end-to-end against real recorded traffic (5-request batch +
+a synthetic concurrent-dispatch test): single coherent run per request,
+zero orphaned parents, correct nesting under true same-turn fan-out.
 
 ## Retrieval-augmented generation (RAG)
 
@@ -276,17 +160,8 @@ graph LR
     A[embed_query] --> B[vector_search] --> C[generate]
 ```
 
-Workflow: `rag_retrieval`. `embed_query`/`vector_search` are non-LLM
-stages (bag-of-words cosine similarity, no vector-DB dependency) that —
-like `retry_validation_loop.validate` and unlike `support_triage.retrieve`
-— explicitly call `runtime.record_call(cost_usd=0)`, so both remain
-visible as real nodes.
-
-Expected `/api/network`: three-node linear chain, same shape as "sequential
-pipeline" above — the distinguishing fact is in the stage names/semantics,
-not the topology. Verified by running `rag_retrieval.handle(...)` once:
-three `Call` rows, `embed_query` (`parent_call_id: null`) ->
-`vector_search` -> `generate`.
+`rag_retrieval`. `embed_query`/`vector_search` are non-LLM but record
+explicitly, so both stay visible. Verified: 3 `Call` rows, linear chain.
 
 ## Multi-turn iterative tool use
 
@@ -296,14 +171,8 @@ graph LR
     A -. done .-> C[end]
 ```
 
-Workflow: `tool_use_loop`. `call_tool` is non-LLM but, like
-`retry_validation_loop.validate`, explicitly calls
-`runtime.record_call(cost_usd=0)` so it stays a visible node.
-
-Expected `/api/network`: `decide_action -> call_tool -> decide_action` is a
-genuine cycle; one of the two `decide_action<->call_tool` edges is
-`back_arc: true`, same pattern as the standalone retry loop but named
-differently to keep the two shapes distinguishable in the catalog.
+`tool_use_loop`. `call_tool` is non-LLM but records explicitly. Genuine
+cycle; one `decide_action<->call_tool` edge is `back_arc: true`.
 
 ## Human-in-the-loop approval
 
@@ -314,12 +183,8 @@ graph LR
     B --> D[discard]
 ```
 
-Workflow: `human_approval`. `await_approval` is non-LLM but explicitly
-calls `runtime.record_call(cost_usd=0)`, so it appears as a real node
-with two outgoing edges rather than disappearing.
-
-Expected `/api/network`: `await_approval` has two outgoing edges
-(`execute`, `discard`), both `concurrent: 0` (alternatives, not siblings).
+`human_approval`. `await_approval` records explicitly; two outgoing
+edges, both `concurrent: 0` (alternatives).
 
 ## Branch + fan-out + retry (composite)
 
@@ -339,31 +204,19 @@ graph LR
     G -. approve .-> H[publish_postmortem]
 ```
 
-Workflow: `incident_response`. The richest shape — combines a branch
-(`correlate` to one of three playbooks), a fan-out/join
-(`gather_signals`/`fetch_*`/`correlate`), and a retry loop
-(`draft_postmortem`/`critique_postmortem`) in one workflow. `fetch_logs`,
-`fetch_metrics`, `fetch_alerts` run while `gather_signals` is still
-active, so their `Call.stage` is recorded as `"gather_signals>fetch_logs"`
-etc.; `_innermost_stage` collapses that to `fetch_logs` for the node.
-`gather_signals` itself is also a real node because it calls `real_chat`
-directly (a planning call) *before* fanning out — unlike the wrapper
-stages in `gaia_multihop`/`tau_retail_agent`/`swe_patch_agent`, which
-never call `real_chat` in their own frame. `correlate` is called from
-`handle()`'s frame *after* `await gather_signals(...)` returns, so —
-per the gather/join note above — its parent is `gather_signals` (the
-call that ran just before the gather, inside `gather_signals`'s own
-body), not any of the `fetch_*` siblings; there is no `fetch_* ->
-correlate` edge, and `gather_signals -> correlate` shares the same
-sibling group as `gather_signals -> fetch_*`, so it's also flagged
-`concurrent` (see the sibling-count caveat above). Already covered by
-`tests/test_workflows_smoke.py`'s `test_incident_*` tests and
-`tests/test_benchmark_workflows.py`'s `test_incident_fanout_shares_one_parent_call`
+`incident_response` — the richest shape: a branch (`correlate` to one of
+three playbooks), a fan-out/join (`gather_signals`/`fetch_*`/`correlate`),
+and a retry loop (`draft_postmortem`/`critique_postmortem`). `fetch_*`
+stages record as `"gather_signals>fetch_*"`, collapsing to the plain tool
+node. `gather_signals` is itself a real node (calls `real_chat` directly
+before fanning out). Per the gather/join note, `correlate` parents to
+`gather_signals`, sharing its sibling group (and `concurrent` flag) with
+the `fetch_*` calls. Covered by `tests/test_workflows_smoke.py` and
+`tests/test_benchmark_workflows.py::test_incident_fanout_shares_one_parent_call`
 (both in `praximetry-cloud`).
 
 ## Trace/graph passthrough (no `praximetry.stage` calls)
 
-Workflow: `otel_graph_agent`. Emits raw OpenTelemetry GenAI spans;
-`praximetry.instrument_otel()` maps span name -> stage after the fact. It
-never calls a chat function at all — the "model calls" are hardcoded
-token/cost attributes on synthetic spans, not real completions.
+`otel_graph_agent`. Emits raw OpenTelemetry GenAI spans;
+`instrument_otel()` maps span name -> stage after the fact. No real chat
+calls — token/cost are hardcoded attributes on synthetic spans.
