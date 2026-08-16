@@ -55,7 +55,7 @@ def _sim_llm(model: str, messages: list[dict], answer: str) -> str:
     tin = sum(len(str(m.get("content", ""))) // 4 for m in messages)
     tout = max(len(answer) // 4, 1) + random.randint(2, 9)
     px.record_call(
-        provider="sim", model=model, messages=messages, response_text=answer,
+        provider="sim", model=model, messages=messages, output_text=answer,
         input_tokens=tin, output_tokens=tout,
         cost_usd=pricing.cost_usd(model, tin, tout),
         latency_ms=random.uniform(200, 900),
