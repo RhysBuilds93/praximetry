@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 from .. import pricing
 from ..runtime import get_overrides, record_call
+from .output import NormalizedOutput
 from .providers import PROVIDERS, ProviderSpec
 from .wrap import AsyncStreamWrapper, SyncStreamWrapper
 
@@ -71,66 +72,72 @@ def _apply_overrides(kwargs: dict[str, Any], messages_key: str) -> dict[str, Any
     return kwargs
 
 
-def _record(provider: str, model: str, messages: list, text: str,
-            tin: int, tout: int, t0: float, error: str | None) -> None:
+def _record(provider: str, model: str, messages: list, out: "NormalizedOutput",
+            t0: float, error: str | None) -> None:
     record_call(
-        provider=provider, model=model, messages=messages, response_text=text,
-        input_tokens=tin, output_tokens=tout, cost_usd=pricing.cost_usd(model, tin, tout),
+        provider=provider, model=model, messages=messages,
+        output_text=out.output_text, reasoning_text=out.reasoning_text,
+        tool_calls=[tc.model_dump() for tc in out.tool_calls],
+        structured_output=out.structured_output,
+        content_parts=[cp.model_dump() for cp in out.content_parts],
+        input_tokens=out.tokens_in, output_tokens=out.tokens_out,
+        cost_usd=pricing.cost_usd(model, out.tokens_in, out.tokens_out),
         latency_ms=(time.perf_counter() - t0) * 1000, error=error,
     )
 
 
-def _make_stream_done(provider: str, model: str, messages: list, t0: float):
+def _make_stream_done(provider: str, model: str, messages: list, adapter, t0: float):
     def on_done(state: dict[str, Any]) -> None:
-        _record(provider, model, messages, state["text"], state["tin"], state["tout"], t0, None)
+        state["model"] = model
+        out = adapter.finalize_stream(state)
+        _record(provider, model, messages, out, t0, None)
     return on_done
 
 
-def _instrument(original: Callable, provider: str, get_messages, response_extract,
-                accumulate, is_async: bool, messages_key: str = "messages",
-                force_stream: bool = False) -> Callable:
+def _instrument(original: Callable, provider: str, adapter, is_async: bool,
+                messages_key: str = "messages", force_stream: bool = False) -> Callable:
     """Build a patched create() wrapping `original` for one provider/sync-ness."""
     if is_async:
         async def acreate(self: Any, *args: Any, **kwargs: Any) -> Any:
             kwargs = _apply_overrides(kwargs, messages_key)
-            model, messages = kwargs.get("model", "unknown"), get_messages(kwargs)
+            model, messages = kwargs.get("model", "unknown"), adapter.get_messages(kwargs)
             if _capture_hook is not None:
                 return _capture_hook({"provider": provider, "model": model,
                                        "messages": messages, "tools": kwargs.get("tools", [])})
             t0 = time.perf_counter()
             if force_stream or kwargs.get("stream"):
                 resp = await original(self, *args, **kwargs)
-                return AsyncStreamWrapper(resp, accumulate,
-                                          _make_stream_done(provider, model, messages, t0))
+                return AsyncStreamWrapper(resp, adapter.accumulate,
+                                          _make_stream_done(provider, model, messages, adapter, t0))
             try:
                 resp = await original(self, *args, **kwargs)
             except Exception as e:  # noqa: BLE001
-                _record(provider, model, messages, "", 0, 0, t0, str(e))
+                _record(provider, model, messages, NormalizedOutput(), t0, str(e))
                 raise
-            text, tin, tout = response_extract(resp)
-            _record(provider, model, messages, text, tin, tout, t0, None)
+            out = adapter.parse_response(resp, model)
+            _record(provider, model, messages, out, t0, None)
             return resp
         acreate._praximetry_patched = True  # type: ignore[attr-defined]
         return acreate
 
     def create(self: Any, *args: Any, **kwargs: Any) -> Any:
         kwargs = _apply_overrides(kwargs, messages_key)
-        model, messages = kwargs.get("model", "unknown"), get_messages(kwargs)
+        model, messages = kwargs.get("model", "unknown"), adapter.get_messages(kwargs)
         if _capture_hook is not None:
             return _capture_hook({"provider": provider, "model": model,
                                    "messages": messages, "tools": kwargs.get("tools", [])})
         t0 = time.perf_counter()
         if force_stream or kwargs.get("stream"):
             resp = original(self, *args, **kwargs)
-            return SyncStreamWrapper(resp, accumulate,
-                                     _make_stream_done(provider, model, messages, t0))
+            return SyncStreamWrapper(resp, adapter.accumulate,
+                                     _make_stream_done(provider, model, messages, adapter, t0))
         try:
             resp = original(self, *args, **kwargs)
         except Exception as e:  # noqa: BLE001
-            _record(provider, model, messages, "", 0, 0, t0, str(e))
+            _record(provider, model, messages, NormalizedOutput(), t0, str(e))
             raise
-        text, tin, tout = response_extract(resp)
-        _record(provider, model, messages, text, tin, tout, t0, None)
+        out = adapter.parse_response(resp, model)
+        _record(provider, model, messages, out, t0, None)
         return resp
     create._praximetry_patched = True  # type: ignore[attr-defined]
     return create
@@ -174,16 +181,14 @@ def _patch(spec: ProviderSpec) -> bool:
             continue
         original = getattr(host, target.attr)
         if target.self_less:
-            inst = _instrument(
-                _self_less(original), spec.name, spec.get_messages, spec.response_extract,
-                spec.accumulate, is_async=target.is_async, messages_key=spec.messages_key,
-                force_stream=target.force_stream)
+            inst = _instrument(_self_less(original), spec.name, spec.adapter,
+                               is_async=target.is_async, messages_key=spec.messages_key,
+                               force_stream=target.force_stream)
             setattr(host, target.attr, _self_less_caller(inst, target.is_async))
         else:
-            new = _instrument(
-                original, spec.name, spec.get_messages, spec.response_extract,
-                spec.accumulate, is_async=target.is_async, messages_key=spec.messages_key,
-                force_stream=target.force_stream)
+            new = _instrument(original, spec.name, spec.adapter,
+                              is_async=target.is_async, messages_key=spec.messages_key,
+                              force_stream=target.force_stream)
             setattr(host, target.attr, new)  # type: ignore[method-assign]
 
     _patched.add(spec.name)

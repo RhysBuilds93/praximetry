@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from . import extractors as ex
+from .adapters import ADAPTERS, OutputAdapter
 
 
 @dataclass
@@ -39,9 +39,7 @@ class ProviderSpec:
     name: str
     owner: Callable[[], tuple[Any, Any]]  # () -> (sync_host, async_host); raises ImportError
     targets: list[PatchTarget]
-    get_messages: Callable
-    response_extract: Callable
-    accumulate: Callable
+    adapter: OutputAdapter
     messages_key: str = "messages"
 
 
@@ -73,9 +71,7 @@ PROVIDERS: list[ProviderSpec] = [
             PatchTarget(attr="create", is_async=False),
             PatchTarget(attr="create", is_async=True),
         ],
-        get_messages=ex.openai_messages,
-        response_extract=ex.openai_response,
-        accumulate=ex.openai_accumulate,
+        adapter=ADAPTERS["openai"],
     ),
     ProviderSpec(
         name="anthropic",
@@ -84,9 +80,7 @@ PROVIDERS: list[ProviderSpec] = [
             PatchTarget(attr="create", is_async=False),
             PatchTarget(attr="create", is_async=True),
         ],
-        get_messages=ex.anthropic_messages,
-        response_extract=ex.anthropic_response,
-        accumulate=ex.anthropic_accumulate,
+        adapter=ADAPTERS["anthropic"],
     ),
     ProviderSpec(
         name="litellm",
@@ -95,9 +89,7 @@ PROVIDERS: list[ProviderSpec] = [
             PatchTarget(attr="completion", is_async=False, self_less=True),
             PatchTarget(attr="acompletion", is_async=True, self_less=True, optional=True),
         ],
-        get_messages=ex.openai_messages,
-        response_extract=ex.openai_response,
-        accumulate=ex.openai_accumulate,
+        adapter=ADAPTERS["litellm"],
     ),
     ProviderSpec(
         name="gemini",
@@ -108,9 +100,7 @@ PROVIDERS: list[ProviderSpec] = [
             PatchTarget(attr="generate_content_stream", is_async=False,
                         force_stream=True, optional=True),
         ],
-        get_messages=ex.gemini_messages,
-        response_extract=ex.gemini_response,
-        accumulate=ex.gemini_accumulate,
+        adapter=ADAPTERS["gemini"],
         messages_key="contents",
     ),
 ]
