@@ -15,6 +15,7 @@ Note: OTel is read-only telemetry. It powers observe + evaluate + *recommend*.
 The optimizer's in-flight apply/override still needs SDK-level instrumentation
 (praximetry.init), since you cannot mutate a request from a telemetry span.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -26,13 +27,26 @@ from .runtime import current_run
 
 # Attribute aliases across the common conventions (OTel GenAI semconv,
 # OpenInference, OpenLLMetry/traceloop). First match wins.
-_MODEL = ("gen_ai.response.model", "gen_ai.request.model", "llm.model_name",
-          "llm.invocation_parameters.model", "model")
+_MODEL = (
+    "gen_ai.response.model",
+    "gen_ai.request.model",
+    "llm.model_name",
+    "llm.invocation_parameters.model",
+    "model",
+)
 _PROVIDER = ("gen_ai.system", "llm.system", "llm.provider")
-_IN_TOKENS = ("gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens",
-              "llm.token_count.prompt", "llm.usage.prompt_tokens")
-_OUT_TOKENS = ("gen_ai.usage.output_tokens", "gen_ai.usage.completion_tokens",
-               "llm.token_count.completion", "llm.usage.completion_tokens")
+_IN_TOKENS = (
+    "gen_ai.usage.input_tokens",
+    "gen_ai.usage.prompt_tokens",
+    "llm.token_count.prompt",
+    "llm.usage.prompt_tokens",
+)
+_OUT_TOKENS = (
+    "gen_ai.usage.output_tokens",
+    "gen_ai.usage.completion_tokens",
+    "llm.token_count.completion",
+    "llm.usage.completion_tokens",
+)
 _PROMPT = ("gen_ai.prompt", "llm.input_messages", "llm.prompts")
 _COMPLETION = ("gen_ai.completion", "llm.output_messages", "llm.completion")
 
@@ -70,7 +84,8 @@ def map_span(name: str, attributes: dict[str, Any]) -> Call | None:
     stage = str(_first(attributes, ("gen_ai.operation.name",), name) or name)
     run = current_run()
     output_text, reasoning_text = split_embedded_reasoning(
-        str(_first(attributes, _COMPLETION, "")), model)
+        str(_first(attributes, _COMPLETION, "")), model
+    )
     return Call(
         run_id=run.id if run else "otel",
         stage=stage,

@@ -1,6 +1,7 @@
 """Try:
-    python -m praximetry.examples.workflows.research_supervisor
+python -m praximetry.examples.workflows.research_supervisor
 """
+
 from __future__ import annotations
 
 import concurrent.futures
@@ -12,7 +13,8 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
-from typing_extensions import Annotated, TypedDict
+from typing_extensions import TypedDict
+from typing import Annotated
 
 import praximetry as px
 from praximetry import runtime
@@ -58,8 +60,10 @@ def _record(result: str) -> str:
 @px.stage("web_search")
 def web_search(query: str) -> str:
     """Search the public web for pages relevant to the query."""
-    return _record(f"4 results for '{query}': 2 industry blog posts, a TechCrunch "
-                    f"piece, and a competitor's own announcement, all from the last 90 days.")
+    return _record(
+        f"4 results for '{query}': 2 industry blog posts, a TechCrunch "
+        f"piece, and a competitor's own announcement, all from the last 90 days."
+    )
 
 
 @tool
@@ -73,16 +77,20 @@ def fetch_url(url: str) -> str:
 @px.stage("extract_facts")
 def extract_facts(text: str) -> str:
     """Extract structured facts from fetched page text."""
-    return _record("Extracted: 3 pricing mentions, 1 customer quote, 1 stat "
-                    "('62% of buyers compare at least 3 vendors').")
+    return _record(
+        "Extracted: 3 pricing mentions, 1 customer quote, 1 stat "
+        "('62% of buyers compare at least 3 vendors')."
+    )
 
 
 @tool
 @px.stage("kb_search")
 def kb_search(query: str) -> str:
     """Search the internal knowledge base for relevant docs."""
-    return _record(f"3 KB matches for '{query}': 'Refund Policy v4', "
-                    f"'Checkout Flow Overview', 'Q2 Support Macros'.")
+    return _record(
+        f"3 KB matches for '{query}': 'Refund Policy v4', "
+        f"'Checkout Flow Overview', 'Q2 Support Macros'."
+    )
 
 
 @tool
@@ -96,16 +104,20 @@ def fetch_doc(doc_id: str) -> str:
 @px.stage("summarize_doc")
 def summarize_doc(text: str) -> str:
     """Summarize a fetched internal doc down to the relevant point."""
-    return _record("Summary: refunds are approved within 30 days, 10% restocking "
-                    "fee, 5 business day processing.")
+    return _record(
+        "Summary: refunds are approved within 30 days, 10% restocking "
+        "fee, 5 business day processing."
+    )
 
 
 @tool
 @px.stage("competitor_search")
 def competitor_search(query: str) -> str:
     """Identify the competitor(s) most relevant to the query."""
-    return _record(f"Top match for '{query}': Competitor X (closest feature overlap), "
-                    f"Competitor Z (closest price point).")
+    return _record(
+        f"Top match for '{query}': Competitor X (closest feature overlap), "
+        f"Competitor Z (closest price point)."
+    )
 
 
 @tool
@@ -119,16 +131,18 @@ def fetch_pricing_page(competitor: str) -> str:
 @px.stage("compare_pricing")
 def compare_pricing(their_price: str) -> str:
     """Compare a fetched competitor price against our own list price."""
-    return _record(f"Comparison vs {their_price}: we're priced ~3% lower at list, "
-                    f"before volume discounts.")
+    return _record(
+        f"Comparison vs {their_price}: we're priced ~3% lower at list, " f"before volume discounts."
+    )
 
 
 @tool
 @px.stage("review_search")
 def review_search(query: str) -> str:
     """Find user reviews relevant to the query."""
-    return _record(f"Found 340 reviews mentioning '{query}' across 3 review sites "
-                    f"in the last quarter.")
+    return _record(
+        f"Found 340 reviews mentioning '{query}' across 3 review sites " f"in the last quarter."
+    )
 
 
 @tool
@@ -142,8 +156,9 @@ def fetch_reviews(source: str) -> str:
 @px.stage("score_sentiment")
 def score_sentiment(reviews: str) -> str:
     """Score the sentiment of a batch of fetched reviews."""
-    return _record("Sentiment: 4.7/5 average, 72% positive, main complaint theme "
-                    "is shipping delays.")
+    return _record(
+        "Sentiment: 4.7/5 average, 72% positive, main complaint theme " "is shipping delays."
+    )
 
 
 @tool
@@ -207,6 +222,7 @@ def _run_agent(name: str, request: str) -> str:
 def _agent_dispatch_stage(name: str):
     """@px.stage-wrapped dispatch call, separate from the @tool wrapper so dispatch_node
     can call it directly under runtime.restore_context (see dispatch_node)."""
+
     @px.stage(name)
     def call(request: str) -> str:
         return _run_agent(name, request)
@@ -237,9 +253,11 @@ def finalize_report(request: str, findings: str) -> str:
 
 @px.stage("synthesize")
 def _synthesize(request: str, findings: str) -> str:
-    reply = _model(premium_model()).invoke([
-        HumanMessage(f"Request: {request}\nFindings: {findings}\nSynthesize a reply."),
-    ])
+    reply = _model(premium_model()).invoke(
+        [
+            HumanMessage(f"Request: {request}\nFindings: {findings}\nSynthesize a reply."),
+        ]
+    )
     return _strip_reasoning(reply.content)
 
 
@@ -313,7 +331,9 @@ graph.add_node("supervisor", supervisor_node)
 graph.add_node("dispatch", dispatch_node)
 graph.add_node("finalize", finalize_node)
 graph.set_entry_point("supervisor")
-graph.add_conditional_edges("supervisor", route, {"dispatch": "dispatch", "finalize": "finalize", END: END})
+graph.add_conditional_edges(
+    "supervisor", route, {"dispatch": "dispatch", "finalize": "finalize", END: END}
+)
 graph.add_edge("dispatch", "supervisor")
 graph.add_edge("finalize", END)
 app = graph.compile()
@@ -322,12 +342,14 @@ app = graph.compile()
 def handle(request: str) -> str:
     with runtime.run_context(name=request[:60]):
         seed_ctx = runtime.capture_context()
-        final_state = app.invoke({
-            "messages": [SystemMessage(SUPERVISOR_SYSTEM), HumanMessage(request)],
-            "request": request,
-            "result": None,
-            "_px_ctx": seed_ctx,
-        })
+        final_state = app.invoke(
+            {
+                "messages": [SystemMessage(SUPERVISOR_SYSTEM), HumanMessage(request)],
+                "request": request,
+                "result": None,
+                "_px_ctx": seed_ctx,
+            }
+        )
     return final_state["result"] or _strip_reasoning(final_state["messages"][-1].content)
 
 

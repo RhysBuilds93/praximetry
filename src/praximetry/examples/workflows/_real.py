@@ -22,6 +22,7 @@ Then either set PRAXIMETRY_EXAMPLE_MODEL (and PRAXIMETRY_EXAMPLE_PREMIUM_MODEL,
 where used) or edit the fallbacks below to a model id your AI_ENDPOINT
 actually serves -- there's no cross-provider default that works everywhere.
 """
+
 from __future__ import annotations
 
 import os

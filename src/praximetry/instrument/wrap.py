@@ -5,9 +5,11 @@ unchanged, accumulate text/usage as chunks flow by, and fire an `on_done`
 callback with the accumulated state when the stream is exhausted or closed —
 so streamed calls are recorded just like buffered ones.
 """
+
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 Accumulate = Callable[[Any, dict[str, Any]], None]
 OnDone = Callable[[dict[str, Any]], None]

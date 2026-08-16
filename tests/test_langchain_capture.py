@@ -53,7 +53,10 @@ def test_langchain_capture_records_token_usage_when_present():
     capture.on_llm_start({}, ["hi"], run_id=run_id)
     result = LLMResult(
         generations=[[Generation(text="42")]],
-        llm_output={"model_name": "gpt-4o", "token_usage": {"prompt_tokens": 12, "completion_tokens": 3}},
+        llm_output={
+            "model_name": "gpt-4o",
+            "token_usage": {"prompt_tokens": 12, "completion_tokens": 3},
+        },
     )
     capture.on_llm_end(result, run_id=run_id)
 

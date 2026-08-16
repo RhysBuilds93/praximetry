@@ -1,6 +1,7 @@
 """Try:
-    python -m praximetry.examples.workflows.tool_use_loop
+python -m praximetry.examples.workflows.tool_use_loop
 """
+
 import praximetry as px
 from praximetry import runtime
 
@@ -8,7 +9,9 @@ from ._real import default_model, real_chat
 
 px.init(project="tool-use-loop")
 
-SYSTEM = "You are a travel assistant. Reply with exactly one of: search_flights, search_hotels, done."
+SYSTEM = (
+    "You are a travel assistant. Reply with exactly one of: search_flights, search_hotels, done."
+)
 
 MAX_TURNS = 4
 
@@ -30,8 +33,10 @@ def decide_action(request: str, observations: list[str] | None = None) -> str:
     observations = observations or []
     raw = real_chat(
         default_model(),
-        [{"role": "system", "content": SYSTEM},
-         {"role": "user", "content": f"Request: {request}\nSo far: {observations}"}],
+        [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": f"Request: {request}\nSo far: {observations}"},
+        ],
     )
     return _parse_action(raw)
 

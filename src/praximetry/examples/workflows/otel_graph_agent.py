@@ -17,6 +17,7 @@ Try:
     praximetry summary
     praximetry-cloud detect
 """
+
 from __future__ import annotations
 
 from opentelemetry import trace
@@ -25,17 +26,17 @@ from opentelemetry.sdk.trace import TracerProvider
 import praximetry as px
 
 trace.set_tracer_provider(TracerProvider())
-px.instrument_otel()          # one call; no per-framework connector
+px.instrument_otel()  # one call; no per-framework connector
 tracer = trace.get_tracer("shipping-graph")
 
 # A "graph": nodes with a model each, the way a real LangGraph app is wired.
 GRAPH = [
     # (node name, model, provider, prompt tokens, completion tokens)
-    ("route_intent",      "gpt-4o",           "openai",    1400, 12),
-    ("retrieve_context",  "gpt-4o",           "openai",     900, 40),
-    ("draft_response",    "claude-opus-4-8",  "anthropic", 2200, 260),
-    ("check_policy",      "claude-opus-4-8",  "anthropic", 1800, 8),
-    ("finalise",          "claude-opus-4-8",  "anthropic",  600, 120),
+    ("route_intent", "gpt-4o", "openai", 1400, 12),
+    ("retrieve_context", "gpt-4o", "openai", 900, 40),
+    ("draft_response", "claude-opus-4-8", "anthropic", 2200, 260),
+    ("check_policy", "claude-opus-4-8", "anthropic", 1800, 8),
+    ("finalise", "claude-opus-4-8", "anthropic", 600, 120),
 ]
 
 QUERIES = [
@@ -50,7 +51,7 @@ QUERIES = [
 def run_graph(query: str) -> None:
     """Every node emits a GenAI span. praximetry is not called anywhere in here."""
     with tracer.start_as_current_span("graph.invoke") as root:
-        root.set_attribute("graph.query", query)      # not a GenAI span -> ignored
+        root.set_attribute("graph.query", query)  # not a GenAI span -> ignored
         for node, model, provider, tin, tout in GRAPH:
             with tracer.start_as_current_span(node) as span:
                 span.set_attribute("gen_ai.system", provider)

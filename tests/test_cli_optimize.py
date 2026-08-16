@@ -4,6 +4,7 @@ policy storage) lives in the closed-source cloud repo — out of scope here.
 This proves the CLI's capture -> submit wiring for `optimize` and the
 fetch -> write-overrides wiring for `apply`.
 """
+
 import json
 
 from fastapi import FastAPI, Header, HTTPException
@@ -41,9 +42,12 @@ def _stub_app(*, winner: dict | None = "missing", optimize_result: dict | None =
             raise HTTPException(status_code=401, detail="bad key")
         received["body"] = body
         return optimize_result or {
-            "stage": body["stage"], "examples": len(body["captured_request"]),
-            "winner": {"model": "amazon.nova-pro-v1:0"}, "savings_pct": 0.34,
-            "truncated": False, "errors": [],
+            "stage": body["stage"],
+            "examples": len(body["captured_request"]),
+            "winner": {"model": "amazon.nova-pro-v1:0"},
+            "savings_pct": 0.34,
+            "truncated": False,
+            "errors": [],
         }
 
     @app.get("/api/optimize/winner")
@@ -53,8 +57,13 @@ def _stub_app(*, winner: dict | None = "missing", optimize_result: dict | None =
         if winner == "missing":
             raise HTTPException(status_code=404, detail="no completed run")
         if winner is None:
-            return {"stage": stage, "model": None, "transforms": None,
-                    "experiment_id": None, "savings_pct": None}
+            return {
+                "stage": stage,
+                "model": None,
+                "transforms": None,
+                "experiment_id": None,
+                "savings_pct": None,
+            }
         return winner
 
     app.state.received = received
@@ -64,8 +73,12 @@ def _stub_app(*, winner: dict | None = "missing", optimize_result: dict | None =
 def _patch_client(monkeypatch, http):
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
     import praximetry.eval.hosted as hosted_mod
-    monkeypatch.setattr(hosted_mod, "client_from_env",
-                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
 
 
 def test_optimize_submits_a_capture_and_prints_the_winner(monkeypatch, fake_llm):
@@ -94,11 +107,24 @@ def test_optimize_passes_flags_through(monkeypatch, fake_llm):
     def checkout(text):
         return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
 
-    result = runner.invoke(cli_app, [
-        "optimize", "--stage", "checkout",
-        "--model", "amazon.nova-pro-v1:0", "--model", "gpt-4o-mini",
-        "--transform", "compact", "--quality-tolerance", "0.05", "--max-trials", "3",
-    ])
+    result = runner.invoke(
+        cli_app,
+        [
+            "optimize",
+            "--stage",
+            "checkout",
+            "--model",
+            "amazon.nova-pro-v1:0",
+            "--model",
+            "gpt-4o-mini",
+            "--transform",
+            "compact",
+            "--quality-tolerance",
+            "0.05",
+            "--max-trials",
+            "3",
+        ],
+    )
 
     assert result.exit_code == 0, result.output
     body = http.app.state.received["body"]
@@ -109,9 +135,17 @@ def test_optimize_passes_flags_through(monkeypatch, fake_llm):
 
 
 def test_optimize_no_winner_is_reported_but_not_an_error(monkeypatch, fake_llm):
-    http = TestClient(_stub_app(optimize_result={
-        "stage": "checkout", "examples": 1, "winner": None, "truncated": False, "errors": [],
-    }))
+    http = TestClient(
+        _stub_app(
+            optimize_result={
+                "stage": "checkout",
+                "examples": 1,
+                "winner": None,
+                "truncated": False,
+                "errors": [],
+            }
+        )
+    )
     _patch_client(monkeypatch, http)
 
     @praximetry.stage("checkout")
@@ -159,10 +193,17 @@ def test_optimize_without_an_api_key_is_an_error(monkeypatch):
 
 def test_apply_writes_the_winner_to_overrides_json(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    http = TestClient(_stub_app(winner={
-        "stage": "checkout", "model": "amazon.nova-pro-v1:0", "transforms": ["compact"],
-        "experiment_id": "exp1", "savings_pct": 0.34,
-    }))
+    http = TestClient(
+        _stub_app(
+            winner={
+                "stage": "checkout",
+                "model": "amazon.nova-pro-v1:0",
+                "transforms": ["compact"],
+                "experiment_id": "exp1",
+                "savings_pct": 0.34,
+            }
+        )
+    )
     _patch_client(monkeypatch, http)
 
     result = runner.invoke(cli_app, ["apply", "--stage", "checkout"])
@@ -178,13 +219,20 @@ def test_apply_writes_the_winner_to_overrides_json(monkeypatch, tmp_path):
 def test_apply_preserves_other_stages_in_overrides_json(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".praximetry").mkdir()
-    (tmp_path / ".praximetry" / "overrides.json").write_text(json.dumps({
-        "stages": {"other_stage": {"model": "existing", "transforms": []}}
-    }))
-    http = TestClient(_stub_app(winner={
-        "stage": "checkout", "model": "amazon.nova-pro-v1:0", "transforms": [],
-        "experiment_id": "exp1", "savings_pct": 0.1,
-    }))
+    (tmp_path / ".praximetry" / "overrides.json").write_text(
+        json.dumps({"stages": {"other_stage": {"model": "existing", "transforms": []}}})
+    )
+    http = TestClient(
+        _stub_app(
+            winner={
+                "stage": "checkout",
+                "model": "amazon.nova-pro-v1:0",
+                "transforms": [],
+                "experiment_id": "exp1",
+                "savings_pct": 0.1,
+            }
+        )
+    )
     _patch_client(monkeypatch, http)
 
     result = runner.invoke(cli_app, ["apply", "--stage", "checkout"])

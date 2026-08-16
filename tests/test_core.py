@@ -1,4 +1,5 @@
 """Core: pricing, store, decorators, recording."""
+
 import asyncio
 import sqlite3
 
@@ -23,8 +24,14 @@ def test_cheaper_models_ladder():
 def test_stage_decorator_registers_and_attributes():
     @praximetry.stage("greet")
     def greet(name):
-        record_call(provider="fake", model="gpt-4o", input_tokens=10, output_tokens=5,
-                    cost_usd=0.001, messages=[{"role": "user", "content": name}])
+        record_call(
+            provider="fake",
+            model="gpt-4o",
+            input_tokens=10,
+            output_tokens=5,
+            cost_usd=0.001,
+            messages=[{"role": "user", "content": name}],
+        )
         return f"hi {name}"
 
     assert "greet" in STAGE_REGISTRY
@@ -46,8 +53,14 @@ def test_bare_stage_decorator():
 
 def test_store_totals_and_summary():
     for i in range(3):
-        record_call(provider="fake", model="gpt-4o", stage="s1",
-                    input_tokens=100, output_tokens=50, cost_usd=0.01)
+        record_call(
+            provider="fake",
+            model="gpt-4o",
+            stage="s1",
+            input_tokens=100,
+            output_tokens=50,
+            cost_usd=0.01,
+        )
     t = get_store().totals()
     assert t["n"] == 3 and t["tin"] == 300 and abs(t["cost"] - 0.03) < 1e-9
     summary = get_store().stage_summary()

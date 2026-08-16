@@ -11,6 +11,7 @@ Try:
     praximetry optimize --stage classify -m praximetry.examples.workflows.support_triage
     praximetry apply --stage classify
 """
+
 import json
 
 import praximetry as px
@@ -29,22 +30,38 @@ SYSTEM = "You are TriageBot for AcmeCloud support. " + POLICY * 3
 
 FEW_SHOT = "".join(
     f"Example {i}: {t} -> {c}\n"
-    for i, (t, c) in enumerate([
-        ("I was double charged", "billing"), ("Screen went black", "hardware"),
-        ("Reset my password", "account"), ("Invoice missing VAT", "billing"),
-        ("Fan is very loud", "hardware"), ("Change my email", "account"),
-        ("Charged after cancelling", "billing"), ("Trackpad not clicking", "hardware"),
-    ], start=1)
+    for i, (t, c) in enumerate(
+        [
+            ("I was double charged", "billing"),
+            ("Screen went black", "hardware"),
+            ("Reset my password", "account"),
+            ("Invoice missing VAT", "billing"),
+            ("Fan is very loud", "hardware"),
+            ("Change my email", "account"),
+            ("Charged after cancelling", "billing"),
+            ("Trackpad not clicking", "hardware"),
+        ],
+        start=1,
+    )
 )
 
 KB = {
     "categories": {
-        "billing": {"keywords": ["charge", "refund", "invoice", "payment", "subscription", "vat"],
-                    "sla_hours": 24, "team": "finance-support"},
-        "hardware": {"keywords": ["screen", "battery", "keyboard", "fan", "trackpad", "camera"],
-                     "sla_hours": 48, "team": "device-support"},
-        "account": {"keywords": ["password", "login", "email", "2fa", "username"],
-                    "sla_hours": 12, "team": "identity-support"},
+        "billing": {
+            "keywords": ["charge", "refund", "invoice", "payment", "subscription", "vat"],
+            "sla_hours": 24,
+            "team": "finance-support",
+        },
+        "hardware": {
+            "keywords": ["screen", "battery", "keyboard", "fan", "trackpad", "camera"],
+            "sla_hours": 48,
+            "team": "device-support",
+        },
+        "account": {
+            "keywords": ["password", "login", "email", "2fa", "username"],
+            "sla_hours": 12,
+            "team": "identity-support",
+        },
     }
 }
 
@@ -53,10 +70,12 @@ KB = {
 def classify(ticket: str) -> str:
     messages = [
         {"role": "system", "content": SYSTEM},
-        {"role": "user", "content":
-            f"Knowledge base:\n{json.dumps(KB, indent=4)}\n\n{FEW_SHOT}\nTicket: {ticket}\n\n"
+        {
+            "role": "user",
+            "content": f"Knowledge base:\n{json.dumps(KB, indent=4)}\n\n{FEW_SHOT}\nTicket: {ticket}\n\n"
             "Reply with exactly one word: the matching category "
-            f"({', '.join(KB['categories'])}), or \"general\" if none fit."},
+            f"({', '.join(KB['categories'])}), or \"general\" if none fit.",
+        },
     ]
     return real_chat(premium_model(), messages).strip().lower()
 
@@ -72,11 +91,13 @@ def respond(ticket: str, category: str) -> str:
     info = retrieve(category)
     messages = [
         {"role": "system", "content": SYSTEM},
-        {"role": "user", "content":
-            f"Team: {info.get('team')}. SLA: {info.get('sla_hours')}h. "
+        {
+            "role": "user",
+            "content": f"Team: {info.get('team')}. SLA: {info.get('sla_hours')}h. "
             f"Write a short acknowledgement for this {category} ticket: {ticket}\n\n"
             f"Your reply must literally include the words \"{category}\" and "
-            f"\"{info.get('team')}\"."},
+            f"\"{info.get('team')}\".",
+        },
     ]
     return real_chat(default_model(), messages)
 
