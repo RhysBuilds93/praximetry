@@ -64,9 +64,7 @@ class LangChainCallbackCapture(BaseCallbackHandler, CaptureMechanism):
 
 
 def install_langchain_capture() -> bool:
-    """Entry point documenting LangChain capture setup.
-
-    LangChain has no client to monkeypatch, so there's nothing to install
+    """LangChain has no client to monkeypatch, so there's nothing to install
     globally — attach `LangChainCallbackCapture()` via `callbacks=[...]` on
     the LLM/chain you want captured.
 
