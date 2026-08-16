@@ -23,19 +23,25 @@ def _g(obj: Any, *path: str, default: Any = None) -> Any:
 
 
 class OutputAdapter(ABC):
+    """Pure per-provider parsing: SDK request/response objects -> NormalizedOutput."""
+
     name: str
 
     @abstractmethod
-    def get_messages(self, kwargs: dict[str, Any]) -> list[dict[str, Any]]: ...
+    def get_messages(self, kwargs: dict[str, Any]) -> list[dict[str, Any]]:
+        """Extract the request's messages from the SDK call's kwargs."""
 
     @abstractmethod
-    def parse_response(self, resp: Any, model: str) -> NormalizedOutput: ...
+    def parse_response(self, resp: Any, model: str) -> NormalizedOutput:
+        """Parse one complete, non-streaming SDK response object."""
 
     @abstractmethod
-    def accumulate(self, chunk: Any, state: dict[str, Any]) -> None: ...
+    def accumulate(self, chunk: Any, state: dict[str, Any]) -> None:
+        """Fold one streaming chunk into `state`, mutated in place across the stream."""
 
     @abstractmethod
-    def finalize_stream(self, state: dict[str, Any]) -> NormalizedOutput: ...
+    def finalize_stream(self, state: dict[str, Any]) -> NormalizedOutput:
+        """Build the NormalizedOutput once a stream accumulated via `accumulate` is exhausted."""
 
 
 class OpenAIAdapter(OutputAdapter):
