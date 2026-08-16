@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import pricing
+from .instrument.reasoning_patterns import split_embedded_reasoning
 from .models import Call
 from .runtime import current_run
 
@@ -68,13 +69,16 @@ def map_span(name: str, attributes: dict[str, Any]) -> Call | None:
     # Span name is the framework's node/step name -> natural stage attribution.
     stage = str(_first(attributes, ("gen_ai.operation.name",), name) or name)
     run = current_run()
+    output_text, reasoning_text = split_embedded_reasoning(
+        str(_first(attributes, _COMPLETION, "")), model)
     return Call(
         run_id=run.id if run else "otel",
         stage=stage,
         provider=provider,
         model=model,
         messages=[{"role": "prompt", "content": str(_first(attributes, _PROMPT, ""))}],
-        output_text=str(_first(attributes, _COMPLETION, "")),
+        output_text=output_text,
+        reasoning_text=reasoning_text,
         input_tokens=tin,
         output_tokens=tout,
         cost_usd=pricing.cost_usd(model, tin, tout),
