@@ -13,9 +13,8 @@ from langchain_core.outputs import LLMResult
 
 from ..runtime import record_call
 from .. import pricing
-from .adapters import ADAPTERS
 from .capture import CaptureMechanism
-from .output import NormalizedOutput
+from .reasoning_patterns import split_embedded_reasoning
 
 
 class LangChainCallbackCapture(BaseCallbackHandler, CaptureMechanism):
@@ -33,21 +32,19 @@ class LangChainCallbackCapture(BaseCallbackHandler, CaptureMechanism):
 
     def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
         messages, t0 = self._starts.pop(run_id, ([], time.perf_counter()))
-        model = (response.llm_output or {}).get("model_name", "unknown")
+        llm_output = response.llm_output or {}
+        model = llm_output.get("model_name", "unknown")
         text = response.generations[0][0].text if response.generations and response.generations[0] else ""
-        adapter = ADAPTERS.get(_provider_for_model(model))
-        if adapter is not None:
-            out = adapter.parse_response(_fake_openai_response(text), model)
-        else:
-            out = NormalizedOutput(output_text=text)
+        output_text, reasoning_text = split_embedded_reasoning(text, model)
+        usage = llm_output.get("token_usage", {}) or {}
+        tin = usage.get("prompt_tokens", usage.get("input_tokens", 0)) or 0
+        tout = usage.get("completion_tokens", usage.get("output_tokens", 0)) or 0
         record_call(
             provider="langchain", model=model, messages=messages,
-            output_text=out.output_text, reasoning_text=out.reasoning_text,
-            tool_calls=[tc.model_dump() for tc in out.tool_calls],
-            structured_output=out.structured_output,
-            content_parts=[cp.model_dump() for cp in out.content_parts],
-            input_tokens=out.tokens_in, output_tokens=out.tokens_out,
-            cost_usd=pricing.cost_usd(model, out.tokens_in, out.tokens_out),
+            output_text=output_text, reasoning_text=reasoning_text,
+            tool_calls=[], structured_output=None, content_parts=[],
+            input_tokens=tin, output_tokens=tout,
+            cost_usd=pricing.cost_usd(model, tin, tout),
             latency_ms=(time.perf_counter() - t0) * 1000, error=None,
         )
 
@@ -61,17 +58,11 @@ class LangChainCallbackCapture(BaseCallbackHandler, CaptureMechanism):
         )
 
 
-def _provider_for_model(model: str) -> str:
-    if model.startswith("gpt") or model.startswith("openai"):
-        return "openai"
-    if model.startswith("claude"):
-        return "anthropic"
-    if model.startswith("gemini"):
-        return "gemini"
-    return "openai"
+def install_langchain_capture() -> bool:
+    """Entry point documenting LangChain capture setup.
 
-
-def _fake_openai_response(text: str) -> Any:
-    from types import SimpleNamespace as NS
-    return NS(choices=[NS(message=NS(content=text, tool_calls=None))],
-              usage=NS(prompt_tokens=0, completion_tokens=0))
+    LangChain has no client to monkeypatch, so there's nothing to install
+    globally — attach `LangChainCallbackCapture()` via `callbacks=[...]` on
+    the LLM/chain you want captured.
+    """
+    return True
