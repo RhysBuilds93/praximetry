@@ -1,8 +1,7 @@
 """OutputAdapter: pure, per-provider SDK object -> NormalizedOutput parsing.
 
 Kept separate from capture mechanism (patch.py / capture.py) so adapters stay
-unit-testable against real SDK response objects without any monkeypatching,
-same convention the old extractors.py used.
+unit-testable against real SDK response objects without any monkeypatching.
 """
 from __future__ import annotations
 
