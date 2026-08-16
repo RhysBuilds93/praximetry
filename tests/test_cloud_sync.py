@@ -52,7 +52,7 @@ def _make_run_and_call(stage="plan_action", messages=None):
     call = Call(
         run_id=run.id, stage=stage, provider="fake", model="gpt-4o",
         messages=messages if messages is not None else [{"role": "user", "content": "hi"}],
-        response_text="ok",
+        output_text="ok",
     )
     return run, call
 
@@ -149,7 +149,7 @@ def test_redaction_hook_strips_messages_before_push_but_not_locally(stub, monkey
     runtime.record_call(
         provider="fake", model="gpt-4o",
         messages=[{"role": "user", "content": "secret"}],
-        response_text="ok",
+        output_text="ok",
     )
     cloud_sync.note_run(run)
     cloud_sync.flush_now()
@@ -171,7 +171,7 @@ def test_record_call_enqueues_when_cloud_sync_running(stub):
     runtime.record_call(
         provider="fake", model="gpt-4o",
         messages=[{"role": "user", "content": "hi"}],
-        response_text="ok",
+        output_text="ok",
     )
     cloud_sync.flush_now()
 
