@@ -92,10 +92,7 @@ def stop(timeout: float = 2.0) -> None:
     if t is not None:
         t.join(timeout=timeout)
     _thread = None
-    try:
-        flush_now()
-    except Exception:  # pragma: no cover - flush_now already swallows errors
-        pass
+    flush_now()
 
 
 def reset() -> None:
