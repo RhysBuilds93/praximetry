@@ -7,6 +7,7 @@ reasoning structurally (Anthropic thinking blocks, OpenAI o1/o3's reasoning
 field) never consult this table — their adapters populate reasoning_text
 directly during parsing.
 """
+
 from __future__ import annotations
 
 import re
@@ -27,5 +28,5 @@ def split_embedded_reasoning(text: str, model: str) -> tuple[str, str]:
         if model.startswith(prefix):
             m = pattern.match(text)
             if m:
-                return text[m.end():].lstrip(), m.group(1).strip()
+                return text[m.end() :].lstrip(), m.group(1).strip()
     return text, ""

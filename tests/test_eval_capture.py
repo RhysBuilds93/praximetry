@@ -5,6 +5,7 @@ No real network contact anywhere in this file — every stage under test uses
 `fake_llm` / `record_call` directly, which record before any network call
 would happen (there isn't one here), so interception is clean.
 """
+
 import asyncio
 
 import httpx
@@ -38,7 +39,8 @@ def test_captures_tool_defs_when_present():
     @praximetry.stage("plan_action")
     def plan_action(text):
         runtime.record_call(
-            provider="fake", model="gpt-4o",
+            provider="fake",
+            model="gpt-4o",
             messages=[{"role": "user", "content": text}],
             tools=[{"name": "get_order", "args": {"order_id": "str"}}],
         )
@@ -60,6 +62,7 @@ def test_never_persists_a_call(fake_llm):
     capture_request(ex)
 
     from praximetry.store import get_store
+
     assert get_store().calls() == []
 
 
@@ -133,12 +136,15 @@ def test_captures_via_instrumented_real_sdk_client():
     def _unreachable(request: httpx.Request) -> httpx.Response:
         raise AssertionError("network call must not happen during capture")
 
-    client = OpenAI(api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(_unreachable)))
+    client = OpenAI(
+        api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(_unreachable))
+    )
 
     @praximetry.stage("real_sdk_classify")
     def real_sdk_classify(text):
         resp = client.chat.completions.create(
-            model="gpt-4o", messages=[{"role": "user", "content": text}])
+            model="gpt-4o", messages=[{"role": "user", "content": text}]
+        )
         return resp.choices[0].message.content
 
     ex = Example(id="e1", stage="real_sdk_classify", input="double charge")

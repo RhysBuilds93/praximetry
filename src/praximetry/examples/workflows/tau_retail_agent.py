@@ -21,6 +21,7 @@ Try:
     praximetry optimize --stage plan_action -m praximetry.examples.workflows.tau_retail_agent
     praximetry apply --stage plan_action
 """
+
 from __future__ import annotations
 
 import copy
@@ -47,31 +48,46 @@ SYSTEM = POLICY * 2
 
 TOOL_SPEC = {
     "tools": [
-        {"name": "get_order", "args": {"order_id": "str"},
-         "description": "Fetch an order's status, items and totals"},
-        {"name": "cancel_order", "args": {"order_id": "str"},
-         "description": "Cancel a PENDING order only"},
-        {"name": "return_order", "args": {"order_id": "str"},
-         "description": "Start a return for a DELIVERED order (required before any refund)"},
-        {"name": "exchange_item", "args": {"order_id": "str", "size": "str"},
-         "description": "Exchange an item on a DELIVERED order for a different size"},
+        {
+            "name": "get_order",
+            "args": {"order_id": "str"},
+            "description": "Fetch an order's status, items and totals",
+        },
+        {
+            "name": "cancel_order",
+            "args": {"order_id": "str"},
+            "description": "Cancel a PENDING order only",
+        },
+        {
+            "name": "return_order",
+            "args": {"order_id": "str"},
+            "description": "Start a return for a DELIVERED order (required before any refund)",
+        },
+        {
+            "name": "exchange_item",
+            "args": {"order_id": "str", "size": "str"},
+            "description": "Exchange an item on a DELIVERED order for a different size",
+        },
     ]
 }
 
 FEW_SHOT = "".join(
     f"Example {i}: {req} -> {tool}\n"
-    for i, (req, tool) in enumerate([
-        ("cancel my order #W1001 (pending)", "cancel_order"),
-        ("where is order #W1002 (delivered)", "get_order"),
-        ("I want to send back #W1003 (delivered)", "return_order"),
-        ("exchange #W1003 for size M (delivered)", "exchange_item"),
-        ("stop order #W1005 shipping (shipped)", "cancel_order"),
-        ("track #W1006 please (pending)", "get_order"),
-        # The customer's wording says "cancel", but the order is already
-        # delivered -- policy means that request maps to return_order, not
-        # cancel_order. This is the case the agent gets wrong most often.
-        ("cancel #W1007, it doesn't fit (delivered)", "return_order"),
-    ], start=1)
+    for i, (req, tool) in enumerate(
+        [
+            ("cancel my order #W1001 (pending)", "cancel_order"),
+            ("where is order #W1002 (delivered)", "get_order"),
+            ("I want to send back #W1003 (delivered)", "return_order"),
+            ("exchange #W1003 for size M (delivered)", "exchange_item"),
+            ("stop order #W1005 shipping (shipped)", "cancel_order"),
+            ("track #W1006 please (pending)", "get_order"),
+            # The customer's wording says "cancel", but the order is already
+            # delivered -- policy means that request maps to return_order, not
+            # cancel_order. This is the case the agent gets wrong most often.
+            ("cancel #W1007, it doesn't fit (delivered)", "return_order"),
+        ],
+        start=1,
+    )
 )
 
 # The "database". Reset per run so evals are deterministic.
@@ -100,8 +116,9 @@ def plan_action(request: str) -> dict:
     """Pick the tool call. This is the stage that has to respect the policy."""
     messages = [
         {"role": "system", "content": SYSTEM},
-        {"role": "user", "content":
-            f"Tools:\n{json.dumps(TOOL_SPEC, indent=4)}\n\n"
+        {
+            "role": "user",
+            "content": f"Tools:\n{json.dumps(TOOL_SPEC, indent=4)}\n\n"
             f"Order book:\n{json.dumps(DB, indent=4)}\n\n"
             f"{FEW_SHOT}\nRequest: {request}\n\n"
             "First look up the order's current status in the order book above, "
@@ -110,7 +127,8 @@ def plan_action(request: str) -> dict:
             "order that is already delivered still means return_order, per policy. "
             "Reply with ONLY a JSON object of the form "
             '{"tool": <tool name>, "order_id": <order id>, "size": <optional>}, '
-            "nothing else."},
+            "nothing else.",
+        },
     ]
     raw = real_chat(premium_model(), messages)
     try:
@@ -146,9 +164,11 @@ def execute(action: dict) -> dict:
 def write_reply(request: str, result: dict) -> str:
     messages = [
         {"role": "system", "content": SYSTEM},
-        {"role": "user", "content":
-            f"Result: {json.dumps(result)}\nWrite one sentence back to the customer "
-            f"about their request: {request}"},
+        {
+            "role": "user",
+            "content": f"Result: {json.dumps(result)}\nWrite one sentence back to the customer "
+            f"about their request: {request}",
+        },
     ]
     return real_chat(default_model(), messages)
 
@@ -164,13 +184,13 @@ def handle_request(request: str) -> dict:
 
 REQUESTS = [
     "Please cancel order #W1001, I ordered by mistake",
-    "I want to cancel #W1002, the rain shell doesn't fit",   # delivered -> must return
+    "I want to cancel #W1002, the rain shell doesn't fit",  # delivered -> must return
     "Where is my order #W1005?",
     "Can I swap #W1002 for a large?",
     "I'd like to send back #W1003 for a refund",
     "Stop order #W1004 from shipping please",
     "Track #W1003 for me",
-    "Cancel #W1005, I changed my mind",                      # shipped -> not cancellable
+    "Cancel #W1005, I changed my mind",  # shipped -> not cancellable
 ]
 
 if __name__ == "__main__":

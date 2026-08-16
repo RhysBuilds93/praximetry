@@ -11,6 +11,7 @@ Try:
     praximetry optimize --stage extract_invoice -m praximetry.examples.workflows.invoice_extraction
     praximetry apply --stage extract_invoice
 """
+
 import json
 
 import praximetry as px
@@ -35,11 +36,15 @@ SCHEMA = {
 @px.stage("extract_invoice")
 def extract_invoice(invoice_text: str) -> str:
     messages = [
-        {"role": "system", "content":
-            "You are a precise data-extraction engine. Return ONLY valid JSON "
-            "matching the schema. Do not add commentary."},
-        {"role": "user", "content":
-            f"JSON schema:\n{json.dumps(SCHEMA, indent=2)}\n\nInvoice text:\n{invoice_text}"},
+        {
+            "role": "system",
+            "content": "You are a precise data-extraction engine. Return ONLY valid JSON "
+            "matching the schema. Do not add commentary.",
+        },
+        {
+            "role": "user",
+            "content": f"JSON schema:\n{json.dumps(SCHEMA, indent=2)}\n\nInvoice text:\n{invoice_text}",
+        },
     ]
     return real_chat(premium_model(), messages)
 

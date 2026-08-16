@@ -7,6 +7,7 @@ messages — is converted here. Default is GBP; override with env vars:
     PRAXIMETRY_CURRENCY=GBP|USD|EUR
     PRAXIMETRY_FX_RATE=0.79            # display units per 1 USD
 """
+
 from __future__ import annotations
 
 import os

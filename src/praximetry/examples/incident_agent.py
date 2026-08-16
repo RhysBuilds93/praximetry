@@ -24,6 +24,7 @@ Runs fully offline (simulated LLM), like demo_agent.py:
     python -m praximetry.examples.incident_agent     # generates traffic into .praximetry/
     praximetry summary
 """
+
 import asyncio
 import random
 
@@ -55,8 +56,12 @@ def _sim_llm(model: str, messages: list[dict], answer: str) -> str:
     tin = sum(len(str(m.get("content", ""))) // 4 for m in messages)
     tout = max(len(answer) // 4, 1) + random.randint(2, 9)
     px.record_call(
-        provider="sim", model=model, messages=messages, output_text=answer,
-        input_tokens=tin, output_tokens=tout,
+        provider="sim",
+        model=model,
+        messages=messages,
+        output_text=answer,
+        input_tokens=tin,
+        output_tokens=tout,
         cost_usd=pricing.cost_usd(model, tin, tout),
         latency_ms=random.uniform(200, 900),
     )
@@ -65,11 +70,13 @@ def _sim_llm(model: str, messages: list[dict], answer: str) -> str:
 
 def _categorize(incident: str) -> str:
     low = incident.lower()
-    return next((cat for cat, kws in CATEGORY_KEYWORDS.items()
-                 if any(k in low for k in kws)), "database")
+    return next(
+        (cat for cat, kws in CATEGORY_KEYWORDS.items() if any(k in low for k in kws)), "database"
+    )
 
 
 # -- branch point --------------------------------------------------------------
+
 
 @px.stage("triage")
 def triage(incident: str) -> str:
@@ -77,13 +84,16 @@ def triage(incident: str) -> str:
     category = _categorize(incident)
     return _sim_llm(
         "claude-opus-4-8",
-        [{"role": "system", "content": SYSTEM},
-         {"role": "user", "content": f"Categories: {list(PLAYBOOKS)}\n\nIncident: {incident}"}],
+        [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": f"Categories: {list(PLAYBOOKS)}\n\nIncident: {incident}"},
+        ],
         category,
     )
 
 
 # -- concurrent fan-out --------------------------------------------------------
+
 
 @px.stage("fetch_logs")
 async def fetch_logs(incident: str) -> str:
@@ -141,13 +151,16 @@ def correlate(incident: str, signals: list[str]) -> str:
     verdict = "clear cause: connection pool saturation" if clear else "cause: inconclusive"
     return _sim_llm(
         "claude-opus-4-8",
-        [{"role": "system", "content": SYSTEM},
-         {"role": "user", "content": f"Incident: {incident}\nSignals:\n" + "\n".join(signals)}],
+        [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": f"Incident: {incident}\nSignals:\n" + "\n".join(signals)},
+        ],
         verdict,
     )
 
 
 # -- the three branch destinations ---------------------------------------------
+
 
 def _playbook(stage_name: str, steps: str):
     @px.stage(stage_name)
@@ -170,6 +183,7 @@ PLAYBOOK_FNS = {"database": db_playbook, "network": network_playbook, "security"
 
 # -- retry loop ----------------------------------------------------------------
 
+
 @px.stage("draft_postmortem")
 def draft_postmortem(incident: str, correlation: str, remediation: str, feedback: str) -> str:
     # Only once the critique has pushed back does the draft commit to a root
@@ -180,9 +194,14 @@ def draft_postmortem(incident: str, correlation: str, remediation: str, feedback
         body += " root cause: identified and confirmed."
     return _sim_llm(
         "claude-opus-4-8",
-        [{"role": "system", "content": SYSTEM},
-         {"role": "user", "content": f"Write the postmortem.\nFinding: {correlation}\n"
-                                     f"Remediation: {remediation}\nReviewer says: {feedback or 'n/a'}"}],
+        [
+            {"role": "system", "content": SYSTEM},
+            {
+                "role": "user",
+                "content": f"Write the postmortem.\nFinding: {correlation}\n"
+                f"Remediation: {remediation}\nReviewer says: {feedback or 'n/a'}",
+            },
+        ],
         body,
     )
 
@@ -207,6 +226,7 @@ def publish_postmortem(draft: str) -> str:
 
 
 # -- orchestration -------------------------------------------------------------
+
 
 async def handle(incident: str) -> str:
     category = triage(incident)

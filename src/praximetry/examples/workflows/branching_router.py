@@ -1,13 +1,16 @@
 """Try:
-    python -m praximetry.examples.workflows.branching_router
+python -m praximetry.examples.workflows.branching_router
 """
+
 import praximetry as px
 
 from ._real import default_model, premium_model, real_chat
 
 px.init(project="branching-router")
 
-SYSTEM = "You are a support routing agent. Reply with exactly one word: billing, technical, or general."
+SYSTEM = (
+    "You are a support routing agent. Reply with exactly one word: billing, technical, or general."
+)
 
 DEPARTMENTS = ("billing", "technical", "general")
 
@@ -21,8 +24,13 @@ def _parse_department(raw: str) -> str:
 def classify_request(request: str) -> str:
     raw = real_chat(
         premium_model(),
-        [{"role": "system", "content": SYSTEM},
-         {"role": "user", "content": f"Departments: {', '.join(DEPARTMENTS)}\nRequest: {request}"}],
+        [
+            {"role": "system", "content": SYSTEM},
+            {
+                "role": "user",
+                "content": f"Departments: {', '.join(DEPARTMENTS)}\nRequest: {request}",
+            },
+        ],
     )
     return _parse_department(raw)
 
@@ -32,8 +40,13 @@ def _routed(stage_name: str):
     def route(request: str) -> str:
         return real_chat(
             default_model(),
-            [{"role": "user", "content": f"Draft a short reply to this {stage_name.removeprefix('route_')} "
-                                          f"request: {request}"}],
+            [
+                {
+                    "role": "user",
+                    "content": f"Draft a short reply to this {stage_name.removeprefix('route_')} "
+                    f"request: {request}",
+                }
+            ],
         )
 
     return route

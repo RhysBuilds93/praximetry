@@ -1,17 +1,22 @@
 """OpenTelemetry ingestion: attribute mapping across conventions + live spans."""
+
 from praximetry import otel
 from praximetry.store import get_store
 
 
 # -- pure attribute mapping (no OTel SDK needed) -----------------------------
 
+
 def test_map_gen_ai_semconv():
-    call = otel.map_span("chat gpt-4o", {
-        "gen_ai.system": "openai",
-        "gen_ai.request.model": "gpt-4o",
-        "gen_ai.usage.input_tokens": 120,
-        "gen_ai.usage.output_tokens": 30,
-    })
+    call = otel.map_span(
+        "chat gpt-4o",
+        {
+            "gen_ai.system": "openai",
+            "gen_ai.request.model": "gpt-4o",
+            "gen_ai.usage.input_tokens": 120,
+            "gen_ai.usage.output_tokens": 30,
+        },
+    )
     assert call.provider == "openai" and call.model == "gpt-4o"
     assert call.input_tokens == 120 and call.output_tokens == 30
     assert call.cost_usd > 0
@@ -19,46 +24,62 @@ def test_map_gen_ai_semconv():
 
 
 def test_map_openinference_convention():
-    call = otel.map_span("llm", {
-        "llm.model_name": "claude-sonnet-5",
-        "llm.provider": "anthropic",
-        "llm.token_count.prompt": 50,
-        "llm.token_count.completion": 8,
-    })
+    call = otel.map_span(
+        "llm",
+        {
+            "llm.model_name": "claude-sonnet-5",
+            "llm.provider": "anthropic",
+            "llm.token_count.prompt": 50,
+            "llm.token_count.completion": 8,
+        },
+    )
     assert call.model == "claude-sonnet-5" and call.provider == "anthropic"
     assert call.input_tokens == 50 and call.output_tokens == 8
 
 
 def test_map_traceloop_prompt_tokens_alias():
-    call = otel.map_span("openai.chat", {
-        "gen_ai.request.model": "gpt-4o-mini",
-        "gen_ai.usage.prompt_tokens": 200,
-        "gen_ai.usage.completion_tokens": 40,
-    })
+    call = otel.map_span(
+        "openai.chat",
+        {
+            "gen_ai.request.model": "gpt-4o-mini",
+            "gen_ai.usage.prompt_tokens": 200,
+            "gen_ai.usage.completion_tokens": 40,
+        },
+    )
     assert call.input_tokens == 200 and call.output_tokens == 40
 
 
 def test_span_name_becomes_stage():
-    call = otel.map_span("summarize_node", {
-        "gen_ai.request.model": "gpt-4o",
-        "gen_ai.usage.input_tokens": 10, "gen_ai.usage.output_tokens": 2,
-    })
+    call = otel.map_span(
+        "summarize_node",
+        {
+            "gen_ai.request.model": "gpt-4o",
+            "gen_ai.usage.input_tokens": 10,
+            "gen_ai.usage.output_tokens": 2,
+        },
+    )
     assert call.stage == "summarize_node"  # framework node name -> stage
 
 
 def test_operation_name_overrides_stage():
-    call = otel.map_span("span-123", {
-        "gen_ai.operation.name": "classify",
-        "gen_ai.request.model": "gpt-4o",
-    })
+    call = otel.map_span(
+        "span-123",
+        {
+            "gen_ai.operation.name": "classify",
+            "gen_ai.request.model": "gpt-4o",
+        },
+    )
     assert call.stage == "classify"
 
 
 def test_map_span_splits_embedded_reasoning():
-    call = otel.map_span("chat", {
-        "gen_ai.request.model": "openai.gpt-oss-120b",
-        "gen_ai.completion": "<reasoning>thinking it through</reasoning>final answer",
-    })
+    call = otel.map_span(
+        "chat",
+        {
+            "gen_ai.request.model": "openai.gpt-oss-120b",
+            "gen_ai.completion": "<reasoning>thinking it through</reasoning>final answer",
+        },
+    )
     assert call.output_text == "final answer"
     assert call.reasoning_text == "thinking it through"
 
@@ -68,18 +89,26 @@ def test_non_llm_span_ignored():
 
 
 def test_record_spans_persists():
-    n = otel.record_spans([
-        {"name": "retrieve", "attributes": {"db.system": "pg"}},  # ignored
-        {"name": "generate", "attributes": {
-            "gen_ai.request.model": "gpt-4o",
-            "gen_ai.usage.input_tokens": 100, "gen_ai.usage.output_tokens": 20}},
-    ])
+    n = otel.record_spans(
+        [
+            {"name": "retrieve", "attributes": {"db.system": "pg"}},  # ignored
+            {
+                "name": "generate",
+                "attributes": {
+                    "gen_ai.request.model": "gpt-4o",
+                    "gen_ai.usage.input_tokens": 100,
+                    "gen_ai.usage.output_tokens": 20,
+                },
+            },
+        ]
+    )
     assert n == 1
     calls = get_store().calls()
     assert len(calls) == 1 and calls[0].stage == "generate" and calls[0].provider == "otel"
 
 
 # -- live span through a real TracerProvider ---------------------------------
+
 
 def test_span_processor_records_real_span():
     from opentelemetry import trace
@@ -106,5 +135,6 @@ def test_span_processor_records_real_span():
 
 def test_instrument_otel_rejects_bad_provider():
     import pytest
+
     with pytest.raises(RuntimeError, match="TracerProvider"):
         otel.instrument_otel(tracer_provider=object())

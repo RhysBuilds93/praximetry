@@ -1,6 +1,7 @@
 """Try:
-    python -m praximetry.examples.workflows.retry_validation_loop
+python -m praximetry.examples.workflows.retry_validation_loop
 """
+
 import json
 
 import praximetry as px
@@ -19,8 +20,11 @@ def generate(request: str, feedback: str = "", attempt: int = 1) -> str:
         messages = [{"role": "user", "content": f"Give a one-line status update for: {request}"}]
     else:
         messages = [
-            {"role": "system", "content": 'Reply with strict JSON: {"status": ..., "summary": ...}. '
-                                           "No other text."},
+            {
+                "role": "system",
+                "content": 'Reply with strict JSON: {"status": ..., "summary": ...}. '
+                "No other text.",
+            },
             {"role": "user", "content": f"Request: {request}\nReviewer feedback: {feedback}"},
         ]
     return real_chat(default_model(), messages)

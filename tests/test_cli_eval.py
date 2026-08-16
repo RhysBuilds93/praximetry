@@ -4,6 +4,7 @@ Corpus fetch and capture push go through a small stub FastAPI app (the real
 hosted server lives in the closed-source cloud repo and does real scoring —
 out of scope here). This proves the CLI's capture -> push -> gate wiring.
 """
+
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
@@ -26,8 +27,9 @@ PROJECT_EXAMPLES = [
 ]
 
 
-def _stub_app(score_by_example: dict, *, examples: list | None = None,
-              eval_config: dict | None = None) -> FastAPI:
+def _stub_app(
+    score_by_example: dict, *, examples: list | None = None, eval_config: dict | None = None
+) -> FastAPI:
     app = FastAPI()
     corpus_examples = examples if examples is not None else EXAMPLES
     batches: dict[str, list[dict]] = {}
@@ -36,17 +38,28 @@ def _stub_app(score_by_example: dict, *, examples: list | None = None,
     def _score(caps: list[dict]) -> dict:
         scores = [score_by_example.get(c["example_id"], 1.0) for c in caps]
         quality = sum(scores) / len(scores) if scores else 0.0
-        return {"count": len(caps), "quality": quality, "pass_rate": quality,
-                "cost_usd": 0.01 * len(caps)}
+        return {
+            "count": len(caps),
+            "quality": quality,
+            "pass_rate": quality,
+            "cost_usd": 0.01 * len(caps),
+        }
 
     @app.get("/api/eval/corpus")
-    def corpus(stage: str | None = None, project: str | None = None,
-               source: str | None = None, authorization: str = Header(None)):
+    def corpus(
+        stage: str | None = None,
+        project: str | None = None,
+        source: str | None = None,
+        authorization: str = Header(None),
+    ):
         if authorization != f"Bearer {VALID_KEY}":
             raise HTTPException(status_code=401, detail="bad key")
-        return [e for e in corpus_examples
-                if (not stage or e["stage"] == stage)
-                and (not project or e.get("project", "proj") == project)]
+        return [
+            e
+            for e in corpus_examples
+            if (not stage or e["stage"] == stage)
+            and (not project or e.get("project", "proj") == project)
+        ]
 
     @app.post("/api/eval/captures")
     def captures(body: dict, authorization: str = Header(None)):
@@ -57,13 +70,20 @@ def _stub_app(score_by_example: dict, *, examples: list | None = None,
         scored = _score(caps)
         batches.setdefault(experiment_id, {})[body["stage"]] = scored
         return {
-            "status": "saved", "stage": body["stage"], "experiment_id": experiment_id,
-            "skipped": [], **scored,
+            "status": "saved",
+            "stage": body["stage"],
+            "experiment_id": experiment_id,
+            "skipped": [],
+            **scored,
         }
 
     @app.get("/api/eval/results")
-    def results(stage: str | None = None, project: str | None = None,
-                experiment_id: str | None = None, authorization: str = Header(None)):
+    def results(
+        stage: str | None = None,
+        project: str | None = None,
+        experiment_id: str | None = None,
+        authorization: str = Header(None),
+    ):
         if authorization != f"Bearer {VALID_KEY}":
             raise HTTPException(status_code=401, detail="bad key")
         if not stage and not project:
@@ -71,12 +91,19 @@ def _stub_app(score_by_example: dict, *, examples: list | None = None,
         exp_id = experiment_id or next(reversed(batches), "generated-experiment-id")
         batch = batches.get(exp_id, {})
         if stage:
-            scored = batch.get(stage, {"count": 0, "quality": 0.0,
-                                       "pass_rate": 0.0, "cost_usd": 0.0})
+            scored = batch.get(
+                stage, {"count": 0, "quality": 0.0, "pass_rate": 0.0, "cost_usd": 0.0}
+            )
             return {"stage": stage, "experiment_id": exp_id, **scored}
-        stages = {name: {"quality": s["quality"], "pass_rate": s["pass_rate"],
-                         "count": s["count"], "experiment_id": exp_id}
-                  for name, s in batch.items()}
+        stages = {
+            name: {
+                "quality": s["quality"],
+                "pass_rate": s["pass_rate"],
+                "count": s["count"],
+                "experiment_id": exp_id,
+            }
+            for name, s in batch.items()
+        }
         agg = sum(s["quality"] for s in stages.values()) / len(stages) if stages else 0.0
         return {"project": project, "stages": stages, "aggregate_quality": agg}
 
@@ -84,8 +111,7 @@ def _stub_app(score_by_example: dict, *, examples: list | None = None,
     def get_config(project: str, stage: str | None = None, authorization: str = Header(None)):
         if authorization != f"Bearer {VALID_KEY}":
             raise HTTPException(status_code=401, detail="bad key")
-        fail_under = saved_config.get((project, stage),
-                                       saved_config.get((project, None), 0.8))
+        fail_under = saved_config.get((project, stage), saved_config.get((project, None), 0.8))
         return {"project": project, "stage": stage, "fail_under": fail_under}
 
     return app
@@ -95,8 +121,12 @@ def test_eval_passes_when_quality_meets_fail_under(monkeypatch, fake_llm):
     http = TestClient(_stub_app(score_by_example={"e1": 1.0, "e2": 1.0}))
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
     import praximetry.eval.hosted as hosted_mod
-    monkeypatch.setattr(hosted_mod, "client_from_env",
-                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
 
     @praximetry.stage("plan_action")
     def plan_action(text):
@@ -113,8 +143,12 @@ def test_eval_fails_under_threshold(monkeypatch, fake_llm):
     http = TestClient(_stub_app(score_by_example={"e1": 0.0, "e2": 0.0}))
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
     import praximetry.eval.hosted as hosted_mod
-    monkeypatch.setattr(hosted_mod, "client_from_env",
-                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
 
     @praximetry.stage("plan_action")
     def plan_action(text):
@@ -130,8 +164,12 @@ def test_eval_partial_skip_still_pushes_captured_examples(monkeypatch, fake_llm)
     http = TestClient(_stub_app(score_by_example={"e1": 1.0}))
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
     import praximetry.eval.hosted as hosted_mod
-    monkeypatch.setattr(hosted_mod, "client_from_env",
-                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
 
     @praximetry.stage("plan_action")
     def plan_action(text):
@@ -149,8 +187,12 @@ def test_eval_empty_corpus_is_unusable(monkeypatch):
     http = TestClient(_stub_app(score_by_example={}))
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
     import praximetry.eval.hosted as hosted_mod
-    monkeypatch.setattr(hosted_mod, "client_from_env",
-                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
 
     result = runner.invoke(cli_app, ["eval", "--stage", "no-such-stage"])
 
@@ -187,14 +229,20 @@ def test_eval_neither_stage_nor_project_is_unusable(monkeypatch):
 
 
 def test_eval_project_alone_gates_on_aggregate_quality(monkeypatch, fake_llm):
-    http = TestClient(_stub_app(
-        score_by_example={"e1": 1.0, "e2": 0.5},
-        examples=PROJECT_EXAMPLES,
-    ))
+    http = TestClient(
+        _stub_app(
+            score_by_example={"e1": 1.0, "e2": 0.5},
+            examples=PROJECT_EXAMPLES,
+        )
+    )
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
     import praximetry.eval.hosted as hosted_mod
-    monkeypatch.setattr(hosted_mod, "client_from_env",
-                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
     _register_project_stages(fake_llm)
 
     result = runner.invoke(cli_app, ["eval", "--project", "proj", "--fail-under", "0.5"])
@@ -207,14 +255,20 @@ def test_eval_project_alone_gates_on_aggregate_quality(monkeypatch, fake_llm):
 
 
 def test_eval_project_alone_fails_below_aggregate_threshold(monkeypatch, fake_llm):
-    http = TestClient(_stub_app(
-        score_by_example={"e1": 1.0, "e2": 0.5},
-        examples=PROJECT_EXAMPLES,
-    ))
+    http = TestClient(
+        _stub_app(
+            score_by_example={"e1": 1.0, "e2": 0.5},
+            examples=PROJECT_EXAMPLES,
+        )
+    )
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
     import praximetry.eval.hosted as hosted_mod
-    monkeypatch.setattr(hosted_mod, "client_from_env",
-                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
     _register_project_stages(fake_llm)
 
     result = runner.invoke(cli_app, ["eval", "--project", "proj", "--fail-under", "0.9"])
@@ -224,14 +278,20 @@ def test_eval_project_alone_fails_below_aggregate_threshold(monkeypatch, fake_ll
 
 
 def test_eval_stage_and_project_together_narrows_to_one_stage(monkeypatch, fake_llm):
-    http = TestClient(_stub_app(
-        score_by_example={"e1": 1.0, "e2": 0.5},
-        examples=PROJECT_EXAMPLES,
-    ))
+    http = TestClient(
+        _stub_app(
+            score_by_example={"e1": 1.0, "e2": 0.5},
+            examples=PROJECT_EXAMPLES,
+        )
+    )
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
     import praximetry.eval.hosted as hosted_mod
-    monkeypatch.setattr(hosted_mod, "client_from_env",
-                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
     _register_project_stages(fake_llm)
 
     result = runner.invoke(
@@ -245,15 +305,21 @@ def test_eval_stage_and_project_together_narrows_to_one_stage(monkeypatch, fake_
 
 
 def test_eval_explicit_fail_under_overrides_fetched_config(monkeypatch, fake_llm):
-    http = TestClient(_stub_app(
-        score_by_example={"e1": 1.0, "e2": 0.5},
-        examples=PROJECT_EXAMPLES,
-        eval_config={("proj", None): 0.99},  # would fail if used
-    ))
+    http = TestClient(
+        _stub_app(
+            score_by_example={"e1": 1.0, "e2": 0.5},
+            examples=PROJECT_EXAMPLES,
+            eval_config={("proj", None): 0.99},  # would fail if used
+        )
+    )
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
     import praximetry.eval.hosted as hosted_mod
-    monkeypatch.setattr(hosted_mod, "client_from_env",
-                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
     _register_project_stages(fake_llm)
 
     result = runner.invoke(cli_app, ["eval", "--project", "proj", "--fail-under", "0.5"])
@@ -263,15 +329,21 @@ def test_eval_explicit_fail_under_overrides_fetched_config(monkeypatch, fake_llm
 
 
 def test_eval_project_without_fail_under_falls_back_to_fetched_config(monkeypatch, fake_llm):
-    http = TestClient(_stub_app(
-        score_by_example={"e1": 1.0, "e2": 0.5},
-        examples=PROJECT_EXAMPLES,
-        eval_config={("proj", None): 0.9},  # aggregate 0.75 < 0.9 -> FAIL
-    ))
+    http = TestClient(
+        _stub_app(
+            score_by_example={"e1": 1.0, "e2": 0.5},
+            examples=PROJECT_EXAMPLES,
+            eval_config={("proj", None): 0.9},  # aggregate 0.75 < 0.9 -> FAIL
+        )
+    )
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
     import praximetry.eval.hosted as hosted_mod
-    monkeypatch.setattr(hosted_mod, "client_from_env",
-                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
     _register_project_stages(fake_llm)
 
     result = runner.invoke(cli_app, ["eval", "--project", "proj"])
@@ -280,19 +352,30 @@ def test_eval_project_without_fail_under_falls_back_to_fetched_config(monkeypatc
     assert "FAIL" in result.output
 
 
-def test_eval_stage_and_project_without_fail_under_uses_stage_override_config(monkeypatch, fake_llm):
-    http = TestClient(_stub_app(
-        score_by_example={"e1": 1.0, "e2": 0.5},
-        examples=PROJECT_EXAMPLES,
-        eval_config={
-            ("proj", None): 0.9,  # project default would fail plan_action's 1.0? no it wouldn't
-            ("proj", "confirm_action"): 0.99,  # stage override -> confirm_action (0.5) should FAIL
-        },
-    ))
+def test_eval_stage_and_project_without_fail_under_uses_stage_override_config(
+    monkeypatch, fake_llm
+):
+    http = TestClient(
+        _stub_app(
+            score_by_example={"e1": 1.0, "e2": 0.5},
+            examples=PROJECT_EXAMPLES,
+            eval_config={
+                ("proj", None): 0.9,  # project default would fail plan_action's 1.0? no it wouldn't
+                (
+                    "proj",
+                    "confirm_action",
+                ): 0.99,  # stage override -> confirm_action (0.5) should FAIL
+            },
+        )
+    )
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
     import praximetry.eval.hosted as hosted_mod
-    monkeypatch.setattr(hosted_mod, "client_from_env",
-                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
     _register_project_stages(fake_llm)
 
     result = runner.invoke(cli_app, ["eval", "--stage", "confirm_action", "--project", "proj"])
@@ -307,8 +390,12 @@ def test_eval_stage_only_without_fail_under_keeps_default_point_nine(monkeypatch
     http = TestClient(_stub_app(score_by_example={"e1": 0.85, "e2": 0.85}))
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
     import praximetry.eval.hosted as hosted_mod
-    monkeypatch.setattr(hosted_mod, "client_from_env",
-                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
 
     @praximetry.stage("plan_action")
     def plan_action(text):
