@@ -74,7 +74,7 @@ def map_span(name: str, attributes: dict[str, Any]) -> Call | None:
         provider=provider,
         model=model,
         messages=[{"role": "prompt", "content": str(_first(attributes, _PROMPT, ""))}],
-        response_text=str(_first(attributes, _COMPLETION, "")),
+        output_text=str(_first(attributes, _COMPLETION, "")),
         input_tokens=tin,
         output_tokens=tout,
         cost_usd=pricing.cost_usd(model, tin, tout),
