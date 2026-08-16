@@ -159,19 +159,24 @@ class GeminiAdapter(OutputAdapter):
 
     def parse_response(self, resp: Any, model: str) -> NormalizedOutput:
         text = ""
+        reasoning_text = ""
         tool_calls: list[ToolCall] = []
         candidates = getattr(resp, "candidates", None) or []
         if candidates:
             for part in _g(candidates[0], "content", "parts", default=[]) or []:
                 if getattr(part, "text", None):
-                    text += part.text
+                    if _g(part, "thought", default=False):
+                        reasoning_text += part.text
+                    else:
+                        text += part.text
                 fc = getattr(part, "function_call", None)
                 if fc is not None:
                     tool_calls.append(ToolCall(id=uuid.uuid4().hex[:16], name=fc.name,
                                                 arguments=dict(fc.args or {})))
         tin = _g(resp, "usage_metadata", "prompt_token_count", default=0) or 0
         tout = _g(resp, "usage_metadata", "candidates_token_count", default=0) or 0
-        return NormalizedOutput(output_text=text, tool_calls=tool_calls, tokens_in=tin, tokens_out=tout)
+        return NormalizedOutput(output_text=text, reasoning_text=reasoning_text,
+                                 tool_calls=tool_calls, tokens_in=tin, tokens_out=tout)
 
     def accumulate(self, chunk: Any, state: dict[str, Any]) -> None:
         state.setdefault("text", "")

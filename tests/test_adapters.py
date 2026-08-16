@@ -177,3 +177,20 @@ def test_gemini_parse_response_function_call():
     out = GeminiAdapter().parse_response(resp, "gemini-2.0-flash")
     assert out.tool_calls[0].name == "lookup"
     assert out.tool_calls[0].arguments == {"q": "weather"}
+
+
+def test_gemini_parse_response_separates_thought_parts():
+    from google.genai import types
+
+    resp = types.GenerateContentResponse(
+        usage_metadata=types.GenerateContentResponseUsageMetadata(
+            prompt_token_count=10, candidates_token_count=4),
+        candidates=[types.Candidate(content=types.Content(
+            role="model", parts=[
+                types.Part(text="let me think", thought=True),
+                types.Part(text="the answer"),
+            ]))],
+    )
+    out = GeminiAdapter().parse_response(resp, "gemini-2.5-flash")
+    assert out.output_text == "the answer"
+    assert out.reasoning_text == "let me think"
