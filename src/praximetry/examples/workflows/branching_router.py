@@ -1,7 +1,4 @@
-"""Workflow: branching router -- classify_request fans to exactly one of
-route_billing/route_technical/route_general per run.
-
-Try:
+"""Try:
     python -m praximetry.examples.workflows.branching_router
 """
 import praximetry as px

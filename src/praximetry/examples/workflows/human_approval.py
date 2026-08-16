@@ -1,8 +1,4 @@
-"""Workflow: human-in-the-loop approval -- await_approval is a deterministic
-stand-in for a human reviewer (keeps runs reproducible); swap for a real
-pending-decision store to make it a genuine pause/resume in production.
-
-Try:
+"""Try:
     python -m praximetry.examples.workflows.human_approval
 """
 import praximetry as px

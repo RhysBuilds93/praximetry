@@ -1,7 +1,4 @@
-"""Workflow: retry/validation loop -- generate produces JSON, validate checks
-it, failures retry with feedback up to MAX_ATTEMPTS.
-
-Try:
+"""Try:
     python -m praximetry.examples.workflows.retry_validation_loop
 """
 import json
