@@ -42,7 +42,7 @@ def test_openai_real_client_buffered():
     call = get_store().calls()[0]
     assert call.provider == "openai" and call.model == "gpt-4o"
     assert call.input_tokens == 21 and call.output_tokens == 7
-    assert call.response_text == "mocked reply"
+    assert call.output_text == "mocked reply"
     assert call.cost_usd > 0 and call.latency_ms > 0
 
 
@@ -71,7 +71,7 @@ def test_openai_real_client_streaming():
     assert text == "streamed"
 
     call = get_store().calls()[0]
-    assert call.response_text == "streamed"
+    assert call.output_text == "streamed"
     assert call.input_tokens == 9 and call.output_tokens == 2
 
 
@@ -118,7 +118,7 @@ def test_anthropic_real_client_async_buffered():
 
     resp = asyncio.run(go())
     assert resp.content[0].text == "async hi"
-    assert get_store().calls()[0].response_text == "async hi"
+    assert get_store().calls()[0].output_text == "async hi"
 
 
 # -- override path through a real client --------------------------------------
@@ -158,4 +158,4 @@ def test_live_anthropic_smoke():
         messages=[{"role": "user", "content": "Say OK"}])
     call = get_store().calls()[0]
     assert call.input_tokens > 0 and call.output_tokens > 0 and call.cost_usd > 0
-    assert call.response_text
+    assert call.output_text
