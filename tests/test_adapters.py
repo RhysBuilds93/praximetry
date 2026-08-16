@@ -1,4 +1,4 @@
-from praximetry.instrument.adapters import ADAPTERS, OpenAIAdapter
+from praximetry.instrument.adapters import ADAPTERS, AnthropicAdapter, GeminiAdapter, OpenAIAdapter
 
 
 def test_openai_adapter_registered():
@@ -88,8 +88,6 @@ def test_openai_accumulate_and_finalize():
     assert out.tokens_in == 4 and out.tokens_out == 2
 
 
-from praximetry.instrument.adapters import AnthropicAdapter
-
 
 def test_anthropic_adapter_registered():
     assert isinstance(ADAPTERS["anthropic"], AnthropicAdapter)
@@ -140,8 +138,6 @@ def test_anthropic_parse_response_tool_use():
     assert out.tool_calls[0].name == "lookup"
     assert out.tool_calls[0].arguments == {"q": "weather"}
 
-
-from praximetry.instrument.adapters import GeminiAdapter
 
 
 def test_gemini_adapter_registered():

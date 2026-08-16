@@ -6,6 +6,7 @@ unit-testable against real SDK response objects without any monkeypatching.
 from __future__ import annotations
 
 import json
+import uuid
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -145,9 +146,6 @@ ADAPTERS: dict[str, OutputAdapter] = {
     "litellm": OpenAIAdapter(),
     "anthropic": AnthropicAdapter(),
 }
-
-
-import uuid
 
 
 class GeminiAdapter(OutputAdapter):
