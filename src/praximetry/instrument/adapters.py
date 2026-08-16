@@ -82,7 +82,61 @@ class OpenAIAdapter(OutputAdapter):
                                  tokens_in=state.get("tin", 0), tokens_out=state.get("tout", 0))
 
 
+class AnthropicAdapter(OutputAdapter):
+    name = "anthropic"
+
+    def get_messages(self, kwargs: dict[str, Any]) -> list[dict[str, Any]]:
+        msgs = list(kwargs.get("messages", []))
+        system = kwargs.get("system")
+        if system:
+            text = system if isinstance(system, str) else str(system)
+            msgs = [{"role": "system", "content": text}] + msgs
+        return msgs
+
+    def parse_response(self, resp: Any, model: str) -> NormalizedOutput:
+        output_text = ""
+        reasoning_text = ""
+        tool_calls: list[ToolCall] = []
+        for block in getattr(resp, "content", None) or []:
+            btype = getattr(block, "type", "")
+            if btype == "text":
+                output_text += getattr(block, "text", "") or ""
+            elif btype == "thinking":
+                reasoning_text += getattr(block, "thinking", "") or ""
+            elif btype == "tool_use":
+                tool_calls.append(ToolCall(id=block.id, name=block.name,
+                                            arguments=dict(block.input)))
+        tin = _g(resp, "usage", "input_tokens", default=0) or 0
+        tout = _g(resp, "usage", "output_tokens", default=0) or 0
+        return NormalizedOutput(output_text=output_text, reasoning_text=reasoning_text,
+                                 tool_calls=tool_calls, tokens_in=tin, tokens_out=tout)
+
+    def accumulate(self, chunk: Any, state: dict[str, Any]) -> None:
+        state.setdefault("text", "")
+        state.setdefault("reasoning", "")
+        etype = getattr(chunk, "type", "")
+        if etype == "message_start":
+            state["tin"] = _g(chunk, "message", "usage", "input_tokens", default=state.get("tin", 0))
+        elif etype == "content_block_delta":
+            delta = getattr(chunk, "delta", None)
+            dtype = getattr(delta, "type", "")
+            if dtype == "text_delta":
+                state["text"] += getattr(delta, "text", "") or ""
+            elif dtype == "thinking_delta":
+                state["reasoning"] += getattr(delta, "thinking", "") or ""
+        elif etype == "message_delta":
+            out = _g(chunk, "usage", "output_tokens", default=None)
+            if out is not None:
+                state["tout"] = out
+
+    def finalize_stream(self, state: dict[str, Any]) -> NormalizedOutput:
+        return NormalizedOutput(output_text=state.get("text", ""),
+                                 reasoning_text=state.get("reasoning", ""),
+                                 tokens_in=state.get("tin", 0), tokens_out=state.get("tout", 0))
+
+
 ADAPTERS: dict[str, OutputAdapter] = {
     "openai": OpenAIAdapter(),
     "litellm": OpenAIAdapter(),
+    "anthropic": AnthropicAdapter(),
 }
