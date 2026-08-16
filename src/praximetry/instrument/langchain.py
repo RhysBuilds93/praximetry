@@ -24,7 +24,12 @@ class LangChainCallbackCapture(BaseCallbackHandler, CaptureMechanism):
         self._starts: dict[UUID, tuple[list[dict], float]] = {}
 
     def install(self, adapter: Any) -> bool:
-        return True  # this class IS the handler; caller attaches it via `callbacks=[...]`
+        """No-op: this class IS the handler, attached via `callbacks=[...]`.
+
+        Returns:
+            Always True.
+        """
+        return True
 
     def on_llm_start(self, serialized: dict, prompts: list[str], *, run_id: UUID, **kwargs: Any) -> None:
         messages = [{"role": "user", "content": p} for p in prompts]
@@ -64,5 +69,8 @@ def install_langchain_capture() -> bool:
     LangChain has no client to monkeypatch, so there's nothing to install
     globally — attach `LangChainCallbackCapture()` via `callbacks=[...]` on
     the LLM/chain you want captured.
+
+    Returns:
+        Always True.
     """
     return True

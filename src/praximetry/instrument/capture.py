@@ -16,8 +16,11 @@ class CaptureMechanism(ABC):
 
     @abstractmethod
     def install(self, adapter: OutputAdapter) -> bool:
-        """Wire this mechanism in for `adapter`'s provider. Returns False if
-        the underlying SDK/framework isn't importable."""
+        """Wire this mechanism in for `adapter`'s provider.
+
+        Returns:
+            False if the underlying SDK/framework isn't importable.
+        """
 
 
 from . import patch as _patch_module

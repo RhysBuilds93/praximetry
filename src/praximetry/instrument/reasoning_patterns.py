@@ -17,6 +17,12 @@ _REASONING_PATTERNS: list[tuple[str, re.Pattern]] = [
 
 
 def split_embedded_reasoning(text: str, model: str) -> tuple[str, str]:
+    """Strip a known embedded reasoning block for `model`'s provider, if any.
+
+    Returns:
+        (output_text, reasoning_text) — text unchanged and reasoning_text ""
+        if no pattern matches `model`.
+    """
     for prefix, pattern in _REASONING_PATTERNS:
         if model.startswith(prefix):
             m = pattern.match(text)
