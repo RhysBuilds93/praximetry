@@ -6,9 +6,10 @@ instead of a create() method to intercept.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
 
+from . import patch as _patch_module
 from .adapters import OutputAdapter
+from .providers import PROVIDERS
 
 
 class CaptureMechanism(ABC):
@@ -21,10 +22,6 @@ class CaptureMechanism(ABC):
         Returns:
             False if the underlying SDK/framework isn't importable.
         """
-
-
-from . import patch as _patch_module
-from .providers import PROVIDERS
 
 
 class MonkeypatchCapture(CaptureMechanism):
