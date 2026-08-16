@@ -4,10 +4,12 @@ Each `ProviderSpec` describes one SDK's shape (class-level vs module-level
 methods, sync/async hosts, extra force_stream wiring) so `patch._patch()` can
 apply the same wrap/record/mark-patched skeleton to all of them generically.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from .adapters import ADAPTERS, OutputAdapter
 
@@ -27,6 +29,7 @@ class PatchTarget:
         functions like `litellm.completion`), so it needs the self-less
         wrapping technique instead of class-method wrapping.
     """
+
     attr: str
     is_async: bool = False
     force_stream: bool = False
@@ -45,21 +48,25 @@ class ProviderSpec:
 
 def _openai_owner() -> tuple[Any, Any]:
     from openai.resources.chat.completions import AsyncCompletions, Completions
+
     return Completions, AsyncCompletions
 
 
 def _anthropic_owner() -> tuple[Any, Any]:
     from anthropic.resources.messages import AsyncMessages, Messages
+
     return Messages, AsyncMessages
 
 
 def _litellm_owner() -> tuple[Any, Any]:
     import litellm
+
     return litellm, litellm
 
 
 def _gemini_owner() -> tuple[Any, Any]:
     from google.genai.models import AsyncModels, Models
+
     return Models, AsyncModels
 
 
@@ -97,8 +104,9 @@ PROVIDERS: list[ProviderSpec] = [
         targets=[
             PatchTarget(attr="generate_content", is_async=False),
             PatchTarget(attr="generate_content", is_async=True),
-            PatchTarget(attr="generate_content_stream", is_async=False,
-                        force_stream=True, optional=True),
+            PatchTarget(
+                attr="generate_content_stream", is_async=False, force_stream=True, optional=True
+            ),
         ],
         adapter=ADAPTERS["gemini"],
         messages_key="contents",

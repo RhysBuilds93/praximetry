@@ -33,7 +33,9 @@ class FakeLLM:
     Cheaper models respond with configurable quality degradation.
     """
 
-    def __init__(self, responses: dict[str, str] | None = None, degrade: dict[str, str] | None = None):
+    def __init__(
+        self, responses: dict[str, str] | None = None, degrade: dict[str, str] | None = None
+    ):
         self.responses = responses or {}
         self.degrade = degrade or {}  # model -> forced (wrong) answer
 
@@ -45,8 +47,12 @@ class FakeLLM:
         text = self.degrade.get(model, self.responses.get(expected_key, "ok"))
         tin = sum(len(str(m.get("content", ""))) // 4 for m in messages)
         runtime.record_call(
-            provider="fake", model=model, messages=messages, output_text=text,
-            input_tokens=tin, output_tokens=len(text) // 4 + 1,
+            provider="fake",
+            model=model,
+            messages=messages,
+            output_text=text,
+            input_tokens=tin,
+            output_tokens=len(text) // 4 + 1,
             cost_usd=pricing.cost_usd(model, tin, len(text) // 4 + 1),
             latency_ms=1.0,
         )

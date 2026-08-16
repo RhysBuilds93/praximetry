@@ -1,6 +1,7 @@
 """Try:
-    python -m praximetry.examples.workflows.rag_retrieval
+python -m praximetry.examples.workflows.rag_retrieval
 """
+
 import math
 import re
 from collections import Counter
@@ -46,8 +47,9 @@ def embed_query(question: str) -> Counter:
 
 @px.stage("vector_search")
 def vector_search(query_vector: Counter, top_k: int = 2) -> list[str]:
-    scored = sorted(CORPUS_VECTORS, key=lambda k: _cosine(query_vector, CORPUS_VECTORS[k]),
-                     reverse=True)
+    scored = sorted(
+        CORPUS_VECTORS, key=lambda k: _cosine(query_vector, CORPUS_VECTORS[k]), reverse=True
+    )
     result = scored[:top_k]
     runtime.record_call(response_text=str(result), cost_usd=0)
     return result
@@ -58,8 +60,10 @@ def generate(question: str, chunk_keys: list[str]) -> str:
     context = "\n".join(CORPUS[k] for k in chunk_keys)
     return real_chat(
         default_model(),
-        [{"role": "system", "content": SYSTEM},
-         {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}],
+        [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"},
+        ],
     )
 
 

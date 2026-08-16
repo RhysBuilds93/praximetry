@@ -12,6 +12,7 @@ best-effort duplicate path to the cloud.
 Mirrors `runtime.py`'s `set_policy_hook()` shape for the redaction extension
 point: a single settable callable, no-op when unset.
 """
+
 from __future__ import annotations
 
 import atexit
@@ -19,7 +20,8 @@ import logging
 import queue
 import threading
 import time
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
+from collections.abc import Callable
 
 from .models import Call, Run
 
@@ -31,8 +33,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAXSIZE = 1000
 _DROP_LOG_INTERVAL_S = 5.0
 
-_queue: "queue.Queue[Call]" = queue.Queue(maxsize=_DEFAULT_MAXSIZE)
-_client: "CloudClient | None" = None
+_queue: queue.Queue[Call] = queue.Queue(maxsize=_DEFAULT_MAXSIZE)
+_client: CloudClient | None = None
 _flush_interval = 5.0
 _thread: threading.Thread | None = None
 _stop_event = threading.Event()
@@ -63,7 +65,9 @@ def is_running() -> bool:
     return _thread is not None and _thread.is_alive()
 
 
-def start(client: "CloudClient", flush_interval: float = 5.0, maxsize: int = _DEFAULT_MAXSIZE) -> None:
+def start(
+    client: CloudClient, flush_interval: float = 5.0, maxsize: int = _DEFAULT_MAXSIZE
+) -> None:
     """Spawn (or reconfigure) the background sync worker. Idempotent while a
     worker is already running — calling twice does not spawn a second thread,
     but does swap in the new client so tests can recover a dead client."""
@@ -164,8 +168,9 @@ def _drain_and_push() -> None:
     for run_id, group in by_run.items():
         run = _run_cache.get(run_id)
         if run is None:
-            logger.warning("cloud_sync: no cached Run for run_id=%s — dropping %d call(s)",
-                            run_id, len(group))
+            logger.warning(
+                "cloud_sync: no cached Run for run_id=%s — dropping %d call(s)", run_id, len(group)
+            )
             continue
         try:
             hook = _redaction_hook
