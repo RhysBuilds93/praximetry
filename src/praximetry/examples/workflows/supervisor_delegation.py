@@ -60,11 +60,7 @@ AGENTS = {"billing": billing_agent, "technical": technical_agent, "general": gen
 
 @px.stage("synthesize")
 def synthesize(request: str, findings: list[str]) -> str:
-    # Called from handle()'s own frame, after the gather -- asyncio copies
-    # context into each spawned agent Task, so mutations inside them never
-    # propagate back out. This call's parent is therefore `supervisor` (the
-    # last stage that ran in handle()'s own context), not any one agent --
-    # same structural shape as incident_response's gather_signals/correlate.
+    # Parents to `supervisor`, not any agent -- see ARCHITECTURES.md's gather/join note.
     joined = " ".join(findings)
     return real_chat(
         premium_model(),

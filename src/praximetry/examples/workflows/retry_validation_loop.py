@@ -28,8 +28,6 @@ MAX_ATTEMPTS = 3
 @px.stage("generate")
 def generate(request: str, feedback: str = "", attempt: int = 1) -> str:
     if attempt == 1:
-        # Deliberately not asking for JSON yet, so the first pass reliably
-        # fails validation and the loop demonstrates a genuine retry.
         messages = [{"role": "user", "content": f"Give a one-line status update for: {request}"}]
     else:
         messages = [
