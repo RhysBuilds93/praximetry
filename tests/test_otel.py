@@ -54,6 +54,15 @@ def test_operation_name_overrides_stage():
     assert call.stage == "classify"
 
 
+def test_map_span_splits_embedded_reasoning():
+    call = otel.map_span("chat", {
+        "gen_ai.request.model": "openai.gpt-oss-120b",
+        "gen_ai.completion": "<reasoning>thinking it through</reasoning>final answer",
+    })
+    assert call.output_text == "final answer"
+    assert call.reasoning_text == "thinking it through"
+
+
 def test_non_llm_span_ignored():
     assert otel.map_span("http.request", {"http.method": "GET", "http.status_code": 200}) is None
 
