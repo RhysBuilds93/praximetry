@@ -1,11 +1,5 @@
-"""Workflow: supervisor delegating to named sub-agents.
-
-`supervisor` classifies which domain(s) a request spans and fans out to
-one or more of `billing_agent` / `technical_agent` / `general_agent`
-concurrently (`asyncio.gather`, same fan-out mechanism `incident_response`
-uses), then `synthesize` merges their outputs -- distinct from a fixed
-fan-out because the *set* of children invoked varies per request (1-3
-agents), not a fixed set of chunks.
+"""Workflow: supervisor delegating to 1-3 of billing_agent/technical_agent/
+general_agent concurrently, then synthesize merges their outputs.
 
 Try:
     python -m praximetry.examples.workflows.supervisor_delegation

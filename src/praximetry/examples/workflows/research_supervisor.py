@@ -1,10 +1,6 @@
-"""LangGraph research supervisor: real tool execution, multi-turn dispatch loop.
-
-Each specialist agent (`web_researcher`, `kb_researcher`,
-`competitor_researcher`, `sentiment_researcher`, `data_researcher`) is its
-own bounded tool-calling loop over 3 real tools. `supervisor` dispatches to
-whichever agents are relevant, sees their findings, and either dispatches
-more or calls `finalize_report`.
+"""Workflow: LangGraph research supervisor -- dispatches to specialist
+agents (web/kb/competitor/sentiment/data researcher), each its own bounded
+tool-calling loop, then finalize_report.
 
 Try:
     python -m praximetry.examples.workflows.research_supervisor

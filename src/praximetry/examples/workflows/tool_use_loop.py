@@ -1,10 +1,5 @@
-"""Workflow: multi-turn iterative tool use.
-
-`decide_action` (the model picks a tool or "done") and `call_tool`
-(non-LLM execution) alternate, with the tool's observation fed back into
-the next `decide_action` call -- a bounded while-loop, distinct from
-`retry_validation_loop`'s shape because the loop here is driven by the
-model choosing to continue, not by a validator rejecting output.
+"""Workflow: multi-turn tool use -- decide_action and call_tool alternate
+until the model says done, bounded by MAX_TURNS.
 
 Try:
     python -m praximetry.examples.workflows.tool_use_loop
@@ -47,8 +42,6 @@ def decide_action(request: str, observations: list[str] | None = None) -> str:
 @px.stage("call_tool")
 def call_tool(tool: str, request: str) -> str:
     result = TOOLS[tool](request)
-    # Record as a zero-cost non-LLM call to maintain call graph structure
-    # without masquerading as a paid model invocation.
     runtime.record_call(response_text=result, cost_usd=0)
     return result
 

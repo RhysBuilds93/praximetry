@@ -1,13 +1,6 @@
-"""Workflow: retrieval-augmented generation.
-
-`embed_query` and `vector_search` are non-LLM stages -- deterministic
-bag-of-words vectors and cosine similarity over a small in-memory corpus,
-the same "non-LLM stage, still attributed in traces" pattern
-`retry_validation_loop.validate` uses (unlike `support_triage.retrieve`,
-which records nothing and is invisible in the graph) -- so this needs no
-vector-DB dependency. Only `generate` calls a model. There is no
-real-embeddings adapter here since the point is exercising the
-record_call/parent_call_id graph shape, not embedding quality.
+"""Workflow: RAG -- embed_query/vector_search are non-LLM stages
+(bag-of-words vectors, cosine similarity over an in-memory corpus); only
+generate calls a model.
 
 Try:
     python -m praximetry.examples.workflows.rag_retrieval
@@ -50,7 +43,6 @@ CORPUS_VECTORS = {key: _vectorize(text) for key, text in CORPUS.items()}
 
 @px.stage("embed_query")
 def embed_query(question: str) -> Counter:
-    """Non-LLM stage: vectorize the query the same way the corpus was vectorized."""
     result = _vectorize(question)
     runtime.record_call(response_text=str(dict(result)), cost_usd=0)
     return result
@@ -58,7 +50,6 @@ def embed_query(question: str) -> Counter:
 
 @px.stage("vector_search")
 def vector_search(query_vector: Counter, top_k: int = 2) -> list[str]:
-    """Non-LLM stage: cosine similarity against the in-memory corpus."""
     scored = sorted(CORPUS_VECTORS, key=lambda k: _cosine(query_vector, CORPUS_VECTORS[k]),
                      reverse=True)
     result = scored[:top_k]
