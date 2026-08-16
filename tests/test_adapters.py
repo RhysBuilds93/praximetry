@@ -139,3 +139,41 @@ def test_anthropic_parse_response_tool_use():
     assert out.output_text == ""
     assert out.tool_calls[0].name == "lookup"
     assert out.tool_calls[0].arguments == {"q": "weather"}
+
+
+from praximetry.instrument.adapters import GeminiAdapter
+
+
+def test_gemini_adapter_registered():
+    assert isinstance(ADAPTERS["gemini"], GeminiAdapter)
+
+
+def test_gemini_parse_response_text():
+    from google.genai import types
+
+    resp = types.GenerateContentResponse(
+        usage_metadata=types.GenerateContentResponseUsageMetadata(
+            prompt_token_count=10, candidates_token_count=4),
+        candidates=[types.Candidate(content=types.Content(
+            role="model", parts=[types.Part(text="answer")]))],
+    )
+    out = GeminiAdapter().parse_response(resp, "gemini-2.0-flash")
+    assert out.output_text == "answer"
+    assert out.tokens_in == 10 and out.tokens_out == 4
+
+
+def test_gemini_parse_response_function_call():
+    from google.genai import types
+
+    resp = types.GenerateContentResponse(
+        usage_metadata=types.GenerateContentResponseUsageMetadata(
+            prompt_token_count=6, candidates_token_count=3),
+        candidates=[types.Candidate(content=types.Content(
+            role="model",
+            parts=[types.Part(function_call=types.FunctionCall(
+                name="lookup", args={"q": "weather"}))],
+        ))],
+    )
+    out = GeminiAdapter().parse_response(resp, "gemini-2.0-flash")
+    assert out.tool_calls[0].name == "lookup"
+    assert out.tool_calls[0].arguments == {"q": "weather"}

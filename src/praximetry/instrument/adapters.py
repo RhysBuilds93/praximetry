@@ -140,3 +140,52 @@ ADAPTERS: dict[str, OutputAdapter] = {
     "litellm": OpenAIAdapter(),
     "anthropic": AnthropicAdapter(),
 }
+
+
+import uuid
+
+
+class GeminiAdapter(OutputAdapter):
+    name = "gemini"
+
+    def get_messages(self, kwargs: dict[str, Any]) -> list[dict[str, Any]]:
+        contents = kwargs.get("contents")
+        config = kwargs.get("config")
+        msgs = [{"role": "user", "content": contents if isinstance(contents, str) else str(contents)}]
+        sys_instr = _g(config, "system_instruction") if config is not None else None
+        if isinstance(sys_instr, str):
+            msgs = [{"role": "system", "content": sys_instr}] + msgs
+        return msgs
+
+    def parse_response(self, resp: Any, model: str) -> NormalizedOutput:
+        text = ""
+        tool_calls: list[ToolCall] = []
+        candidates = getattr(resp, "candidates", None) or []
+        if candidates:
+            for part in _g(candidates[0], "content", "parts", default=[]) or []:
+                if getattr(part, "text", None):
+                    text += part.text
+                fc = getattr(part, "function_call", None)
+                if fc is not None:
+                    tool_calls.append(ToolCall(id=uuid.uuid4().hex[:16], name=fc.name,
+                                                arguments=dict(fc.args or {})))
+        tin = _g(resp, "usage_metadata", "prompt_token_count", default=0) or 0
+        tout = _g(resp, "usage_metadata", "candidates_token_count", default=0) or 0
+        return NormalizedOutput(output_text=text, tool_calls=tool_calls, tokens_in=tin, tokens_out=tout)
+
+    def accumulate(self, chunk: Any, state: dict[str, Any]) -> None:
+        state.setdefault("text", "")
+        state["text"] += getattr(chunk, "text", "") or ""
+        tin = _g(chunk, "usage_metadata", "prompt_token_count", default=None)
+        tout = _g(chunk, "usage_metadata", "candidates_token_count", default=None)
+        if tin:
+            state["tin"] = tin
+        if tout:
+            state["tout"] = tout
+
+    def finalize_stream(self, state: dict[str, Any]) -> NormalizedOutput:
+        return NormalizedOutput(output_text=state.get("text", ""),
+                                 tokens_in=state.get("tin", 0), tokens_out=state.get("tout", 0))
+
+
+ADAPTERS["gemini"] = GeminiAdapter()
