@@ -227,3 +227,4 @@ graphify-out/.graphify_root
 graphify-out/cache/
 graphify-out/cost.json
 .worktrees/
+.claude/
