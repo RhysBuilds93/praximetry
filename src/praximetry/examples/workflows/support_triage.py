@@ -82,7 +82,6 @@ def classify(ticket: str) -> str:
 
 @px.stage("retrieve")
 def retrieve(category: str) -> dict:
-    """Non-LLM stage: fetch routing info (still attributed in traces via stage)."""
     return KB["categories"].get(category, {"team": "general-support", "sla_hours": 72})
 
 

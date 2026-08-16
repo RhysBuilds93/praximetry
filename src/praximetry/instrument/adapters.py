@@ -24,8 +24,6 @@ def _g(obj: Any, *path: str, default: Any = None) -> Any:
 
 
 class OutputAdapter(ABC):
-    """Pure per-provider parsing: SDK request/response objects -> NormalizedOutput."""
-
     name: str
 
     @abstractmethod

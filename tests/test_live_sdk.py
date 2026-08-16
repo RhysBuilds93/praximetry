@@ -19,9 +19,6 @@ from praximetry.store import get_store
 auto_instrument()
 
 
-# -- OpenAI ------------------------------------------------------------------
-
-
 def _openai_json(text="mocked reply", tin=21, tout=7):
     return {
         "id": "chatcmpl-1",
@@ -99,9 +96,6 @@ def test_openai_real_client_streaming():
     assert call.input_tokens == 9 and call.output_tokens == 2
 
 
-# -- Anthropic ----------------------------------------------------------------
-
-
 def _anthropic_json(text="claude says hi", tin=15, tout=5):
     return {
         "id": "msg_1",
@@ -155,9 +149,6 @@ def test_anthropic_real_client_async_buffered():
     assert get_store().calls()[0].output_text == "async hi"
 
 
-# -- override path through a real client --------------------------------------
-
-
 def test_override_rewrites_model_through_real_client():
     from openai import OpenAI
 
@@ -174,12 +165,8 @@ def test_override_rewrites_model_through_real_client():
 
     with override_context(model="gpt-4o-mini"):
         client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
-    # The override changed the model actually sent over the wire.
     assert seen["model"] == "gpt-4o-mini"
     assert get_store().calls()[0].model == "gpt-4o-mini"
-
-
-# -- true live smoke test (opt-in) --------------------------------------------
 
 
 @pytest.mark.skipif(

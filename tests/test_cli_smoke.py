@@ -1,5 +1,3 @@
-"""CLI smoke tests: every command exercised the way a user runs them."""
-
 from typer.testing import CliRunner
 
 from praximetry.cli import app

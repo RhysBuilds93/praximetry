@@ -111,7 +111,6 @@ def _instrument(
     messages_key: str = "messages",
     force_stream: bool = False,
 ) -> Callable:
-    """Build a patched create() wrapping `original` for one provider/sync-ness."""
     if is_async:
 
         async def acreate(self: Any, *args: Any, **kwargs: Any) -> Any:
@@ -178,10 +177,6 @@ def _instrument(
 
 
 def _self_less(orig: Callable) -> Callable:
-    """Wrap a module-level function (no `self`) so `_instrument()` can treat
-    it like a class method. Matches the technique litellm.completion/
-    acompletion need since they have no bound receiver."""
-
     def with_self(_self: Any, *a: Any, **k: Any) -> Any:
         return orig(*a, **k)
 
@@ -206,7 +201,6 @@ def _self_less_caller(inst: Callable, is_async: bool) -> Callable:
 
 
 def _patch(spec: ProviderSpec) -> bool:
-    """Apply one provider's PatchTarget table, generically."""
     if spec.name in _patched:
         return True
     try:

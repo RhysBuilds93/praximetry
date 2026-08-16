@@ -50,9 +50,6 @@ def _parse_category(raw: str) -> str:
     return next((c for c in CATEGORIES if c in low), "database")
 
 
-# -- branch point --------------------------------------------------------------
-
-
 @px.stage("triage")
 def triage(incident: str) -> str:
     raw = real_chat(
@@ -67,9 +64,6 @@ def triage(incident: str) -> str:
         ],
     )
     return _parse_category(raw)
-
-
-# -- concurrent fan-out --------------------------------------------------------
 
 
 @px.stage("fetch_logs")
@@ -169,9 +163,6 @@ def correlate(incident: str, signals: list[str] | None = None) -> str:
     )
 
 
-# -- the three branch destinations ---------------------------------------------
-
-
 def _playbook(stage_name: str, guidance: str):
     @px.stage(stage_name)
     def run_playbook(incident: str, correlation: str = "") -> str:
@@ -195,9 +186,6 @@ network_playbook = _playbook("network_playbook", "rerouting traffic, flushing th
 security_playbook = _playbook("security_playbook", "rotating credentials, revoking sessions")
 
 PLAYBOOKS = {"database": db_playbook, "network": network_playbook, "security": security_playbook}
-
-
-# -- retry loop ----------------------------------------------------------------
 
 
 @px.stage("draft_postmortem")
@@ -263,9 +251,6 @@ def publish_postmortem(draft: str) -> str:
             }
         ],
     )
-
-
-# -- orchestration -------------------------------------------------------------
 
 
 async def handle(incident: str) -> str:

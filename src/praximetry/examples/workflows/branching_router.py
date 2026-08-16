@@ -1,6 +1,4 @@
-"""Try:
-python -m praximetry.examples.workflows.branching_router
-"""
+"""Run with `python -m praximetry.examples.workflows.branching_router`."""
 
 import praximetry as px
 

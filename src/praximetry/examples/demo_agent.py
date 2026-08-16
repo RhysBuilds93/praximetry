@@ -1,9 +1,7 @@
-"""Demo agent: a tiny support-ticket pipeline instrumented with praximetry.
+"""Offline support-ticket pipeline using a simulated LLM.
 
-Runs fully offline (simulated LLM) so you can explore recorded traffic without keys:
-
-    python -m praximetry.examples.demo_agent     # generates traffic into .praximetry/
-    praximetry summary
+python -m praximetry.examples.demo_agent     # generates traffic into .praximetry/
+praximetry summary
 """
 
 import json
@@ -26,7 +24,6 @@ KNOWLEDGE = {
 
 
 def _sim_llm(model: str, messages: list[dict]) -> str:
-    """Offline stand-in for a chat API."""
     text = messages[-1]["content"].lower()
     # Simulate a model that reads the actual ticket, not the reference material.
     if "ticket:" in text:

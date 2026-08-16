@@ -50,18 +50,15 @@ class CapturedRequest(BaseModel):
 
 
 class CaptureError(RuntimeError):
-    """Capture could not produce a request shape for this example."""
+    pass
 
 
 class _CaptureSignal(Exception):
-    """Internal control-flow signal — carries the intercepted record_call() kwargs."""
-
     def __init__(self, kwargs: dict[str, Any]):
         self.kwargs = kwargs
 
 
 def call_stage(fn: Any, example: Example) -> Any:
-    """Invoke `fn` with `example.input` shaped to match how the stage is called."""
     inp = example.input
     if isinstance(inp, dict):
         out = fn(**inp)

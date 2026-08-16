@@ -1,5 +1,3 @@
-"""Runtime context: current run, current stage, active experiment overrides."""
-
 from __future__ import annotations
 
 import contextvars

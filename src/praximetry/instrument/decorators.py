@@ -1,5 +1,3 @@
-"""Developer-facing decorators. Minimal input: one decorator per agent stage."""
-
 from __future__ import annotations
 
 import functools

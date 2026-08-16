@@ -1,6 +1,4 @@
-"""Try:
-python -m praximetry.examples.workflows.research_supervisor
-"""
+"""Run with `python -m praximetry.examples.workflows.research_supervisor`."""
 
 from __future__ import annotations
 
@@ -220,8 +218,7 @@ def _run_agent(name: str, request: str) -> str:
 
 
 def _agent_dispatch_stage(name: str):
-    """@px.stage-wrapped dispatch call, separate from the @tool wrapper so dispatch_node
-    can call it directly under runtime.restore_context (see dispatch_node)."""
+    """Keep the stage wrapper separate so dispatch can restore runtime context."""
 
     @px.stage(name)
     def call(request: str) -> str:
@@ -292,7 +289,7 @@ def supervisor_node(state: ResearchState) -> dict:
 
 
 def dispatch_node(state: ResearchState) -> dict:
-    """Hand-rolled vs. ToolNode so each concurrent dispatch restores px context first."""
+    """Restore captured context before each concurrent specialist dispatch."""
     last = state["messages"][-1]
     calls = [c for c in last.tool_calls if c["name"] != "finalize_report"]
     ctx = state.get("_px_ctx")

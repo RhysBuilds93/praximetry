@@ -1,5 +1,3 @@
-"""Core: pricing, store, decorators, recording."""
-
 import asyncio
 import sqlite3
 

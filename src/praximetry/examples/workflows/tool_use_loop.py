@@ -1,6 +1,4 @@
-"""Try:
-python -m praximetry.examples.workflows.tool_use_loop
-"""
+"""Run with `python -m praximetry.examples.workflows.tool_use_loop`."""
 
 import praximetry as px
 from praximetry import runtime

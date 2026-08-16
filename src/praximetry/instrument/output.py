@@ -1,5 +1,3 @@
-"""Fixed, provider-agnostic shape every OutputAdapter parses responses into."""
-
 from __future__ import annotations
 
 from typing import Any, Literal

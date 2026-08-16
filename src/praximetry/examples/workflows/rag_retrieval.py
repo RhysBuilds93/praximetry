@@ -1,6 +1,4 @@
-"""Try:
-python -m praximetry.examples.workflows.rag_retrieval
-"""
+"""Run with `python -m praximetry.examples.workflows.rag_retrieval`."""
 
 import math
 import re

@@ -34,7 +34,7 @@ EXIT_UNUSABLE = 2
 
 
 class CloudError(RuntimeError):
-    """Anything that stops the run before it can produce a verdict."""
+    pass
 
 
 class CloudClient:

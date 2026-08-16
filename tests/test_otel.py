@@ -4,9 +4,6 @@ from praximetry import otel
 from praximetry.store import get_store
 
 
-# -- pure attribute mapping (no OTel SDK needed) -----------------------------
-
-
 def test_map_gen_ai_semconv():
     call = otel.map_span(
         "chat gpt-4o",
@@ -58,7 +55,7 @@ def test_span_name_becomes_stage():
             "gen_ai.usage.output_tokens": 2,
         },
     )
-    assert call.stage == "summarize_node"  # framework node name -> stage
+    assert call.stage == "summarize_node"
 
 
 def test_operation_name_overrides_stage():
@@ -91,7 +88,7 @@ def test_non_llm_span_ignored():
 def test_record_spans_persists():
     n = otel.record_spans(
         [
-            {"name": "retrieve", "attributes": {"db.system": "pg"}},  # ignored
+            {"name": "retrieve", "attributes": {"db.system": "pg"}},
             {
                 "name": "generate",
                 "attributes": {
@@ -105,9 +102,6 @@ def test_record_spans_persists():
     assert n == 1
     calls = get_store().calls()
     assert len(calls) == 1 and calls[0].stage == "generate" and calls[0].provider == "otel"
-
-
-# -- live span through a real TracerProvider ---------------------------------
 
 
 def test_span_processor_records_real_span():

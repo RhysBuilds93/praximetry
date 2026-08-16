@@ -174,7 +174,7 @@ def test_eval_partial_skip_still_pushes_captured_examples(monkeypatch, fake_llm)
     @praximetry.stage("plan_action")
     def plan_action(text):
         if text == "cancel my order":
-            return "no llm call for this one"  # never calls record_call
+            return "no llm call for this one"
         return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
 
     result = runner.invoke(cli_app, ["eval", "--stage", "plan_action"])
@@ -309,7 +309,7 @@ def test_eval_explicit_fail_under_overrides_fetched_config(monkeypatch, fake_llm
         _stub_app(
             score_by_example={"e1": 1.0, "e2": 0.5},
             examples=PROJECT_EXAMPLES,
-            eval_config={("proj", None): 0.99},  # would fail if used
+            eval_config={("proj", None): 0.99},
         )
     )
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
@@ -333,7 +333,7 @@ def test_eval_project_without_fail_under_falls_back_to_fetched_config(monkeypatc
         _stub_app(
             score_by_example={"e1": 1.0, "e2": 0.5},
             examples=PROJECT_EXAMPLES,
-            eval_config={("proj", None): 0.9},  # aggregate 0.75 < 0.9 -> FAIL
+            eval_config={("proj", None): 0.9},
         )
     )
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
@@ -360,11 +360,11 @@ def test_eval_stage_and_project_without_fail_under_uses_stage_override_config(
             score_by_example={"e1": 1.0, "e2": 0.5},
             examples=PROJECT_EXAMPLES,
             eval_config={
-                ("proj", None): 0.9,  # project default would fail plan_action's 1.0? no it wouldn't
+                ("proj", None): 0.9,
                 (
                     "proj",
                     "confirm_action",
-                ): 0.99,  # stage override -> confirm_action (0.5) should FAIL
+                ): 0.99,
             },
         )
     )
@@ -403,5 +403,5 @@ def test_eval_stage_only_without_fail_under_keeps_default_point_nine(monkeypatch
 
     result = runner.invoke(cli_app, ["eval", "--stage", "plan_action"])
 
-    assert result.exit_code == 1, result.output  # 0.85 < 0.9 default
+    assert result.exit_code == 1, result.output
     assert "FAIL" in result.output

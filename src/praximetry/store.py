@@ -1,4 +1,4 @@
-"""SQLite-backed trace store. Zero-config, thread-safe, WAL mode."""
+"""SQLite-backed trace store with thread-local WAL connections."""
 
 from __future__ import annotations
 
@@ -122,7 +122,6 @@ class Store:
             self._local.conn = conn
         return conn
 
-    # -- writes ------------------------------------------------------------
     def save_run(self, run: Run) -> None:
         with self._conn() as c:
             c.execute(
@@ -206,7 +205,6 @@ class Store:
                 ),
             )
 
-    # -- reads -------------------------------------------------------------
     def runs(self, project: str | None = None, limit: int = 100) -> list[Run]:
         q, args = "SELECT * FROM runs", []
         if project:
@@ -324,7 +322,6 @@ class Store:
         rows = self._conn().execute(q, args).fetchall()
         return [EvalResult(**{**dict(r), "passed": bool(r["passed"])}) for r in rows]
 
-    # -- bulk ingest (used by the remote collector) ------------------------
     def ingest(self, payload: dict[str, Any]) -> dict[str, int]:
         """Write a batch of serialized runs/calls/experiments/eval_results."""
         counts = {}
@@ -354,6 +351,5 @@ def get_store() -> Store:
 
 
 def reset_store() -> None:
-    """Testing hook: force re-open against current config."""
     global _store
     _store = None

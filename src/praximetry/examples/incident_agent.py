@@ -52,7 +52,6 @@ MAX_REVISIONS = 3
 
 
 def _sim_llm(model: str, messages: list[dict], answer: str) -> str:
-    """Offline stand-in for a chat API. Records the call, returns `answer`."""
     tin = sum(len(str(m.get("content", ""))) // 4 for m in messages)
     tout = max(len(answer) // 4, 1) + random.randint(2, 9)
     px.record_call(
@@ -75,9 +74,6 @@ def _categorize(incident: str) -> str:
     )
 
 
-# -- branch point --------------------------------------------------------------
-
-
 @px.stage("triage")
 def triage(incident: str) -> str:
     """Pick the category. Downstream stages genuinely differ per category."""
@@ -90,9 +86,6 @@ def triage(incident: str) -> str:
         ],
         category,
     )
-
-
-# -- concurrent fan-out --------------------------------------------------------
 
 
 @px.stage("fetch_logs")
@@ -159,9 +152,6 @@ def correlate(incident: str, signals: list[str]) -> str:
     )
 
 
-# -- the three branch destinations ---------------------------------------------
-
-
 def _playbook(stage_name: str, steps: str):
     @px.stage(stage_name)
     def run_playbook(incident: str, correlation: str) -> str:
@@ -179,9 +169,6 @@ network_playbook = _playbook("network_playbook", "rerouted traffic, flushed the 
 security_playbook = _playbook("security_playbook", "rotated credentials, revoked sessions")
 
 PLAYBOOK_FNS = {"database": db_playbook, "network": network_playbook, "security": security_playbook}
-
-
-# -- retry loop ----------------------------------------------------------------
 
 
 @px.stage("draft_postmortem")
@@ -223,9 +210,6 @@ def publish_postmortem(draft: str) -> str:
         [{"role": "user", "content": f"Publish:\n{draft}"}],
         "published",
     )
-
-
-# -- orchestration -------------------------------------------------------------
 
 
 async def handle(incident: str) -> str:

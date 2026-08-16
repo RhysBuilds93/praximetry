@@ -1,5 +1,3 @@
-"""Global runtime configuration for praximetry."""
-
 from __future__ import annotations
 
 import os
@@ -26,7 +24,6 @@ class Config:
         return cfg
 
 
-# Set by praximetry.init(); read by instrumentation.
 _config: Config | None = None
 
 

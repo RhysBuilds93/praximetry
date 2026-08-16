@@ -112,7 +112,6 @@ def eval_cmd(
                 )
 
         if project and not stage:
-            # Multi-stage run: gate on the aggregate across the whole project.
             results = client.fetch_results(project=project, experiment_id=experiment_id)
             for stage_name, stage_result in results["stages"].items():
                 typer.echo(
@@ -124,7 +123,6 @@ def eval_cmd(
                 fail_under = client.fetch_eval_config(project=project)["fail_under"]
             typer.echo(f"aggregate quality={quality:.2f}")
         else:
-            # Single-stage run (with or without --project narrowing it).
             result = push_results[stage]
             quality, pass_rate = result["quality"], result["pass_rate"]
             typer.echo(

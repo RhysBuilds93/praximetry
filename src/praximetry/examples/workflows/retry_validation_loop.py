@@ -1,6 +1,4 @@
-"""Try:
-python -m praximetry.examples.workflows.retry_validation_loop
-"""
+"""Run with `python -m praximetry.examples.workflows.retry_validation_loop`."""
 
 import json
 

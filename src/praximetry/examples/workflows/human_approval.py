@@ -1,6 +1,4 @@
-"""Try:
-python -m praximetry.examples.workflows.human_approval
-"""
+"""Run with `python -m praximetry.examples.workflows.human_approval`."""
 
 import praximetry as px
 from praximetry import runtime

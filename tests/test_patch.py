@@ -14,20 +14,14 @@ def test_providers_cover_all_four():
     assert {spec.name for spec in PROVIDERS} == {"openai", "anthropic", "litellm", "gemini"}
 
 
-# -- patch application against REAL SDK classes -----------------------------
-
-
 def test_patchers_apply_to_real_classes():
-    assert P.auto_instrument()  # patches whatever is importable
+    assert P.auto_instrument()
     from anthropic.resources.messages import Messages
     from openai.resources.chat.completions import AsyncCompletions, Completions
 
     assert getattr(Completions.create, "_praximetry_patched", False)
     assert getattr(AsyncCompletions.create, "_praximetry_patched", False)
     assert getattr(Messages.create, "_praximetry_patched", False)
-
-
-# -- recording paths via _instrument with a fake `original` -----------------
 
 
 def _oai_resp(text, tin, tout):
@@ -55,7 +49,8 @@ def test_sync_streaming_records_after_consumption():
     ]
     create = P._instrument(lambda self, **k: iter(chunks), "openai", ADAPTERS["openai"], False)
     stream = create(None, model="gpt-4o", messages=[{"role": "user", "content": "hi"}], stream=True)
-    assert get_store().calls() == []  # nothing recorded until consumed
+    # Streaming calls are persisted only after the iterator is consumed.
+    assert get_store().calls() == []
     text = "".join(c.choices[0].delta.content for c in stream if c.choices)
     assert text == "hello"
     c = get_store().calls()[0]
@@ -111,7 +106,7 @@ def test_anthropic_streaming_events():
     stream = create(
         None, model="claude-sonnet-5", messages=[{"role": "user", "content": "hi"}], stream=True
     )
-    list(stream)  # consume
+    list(stream)
     c = get_store().calls()[0]
     assert c.output_text == "foobar" and c.input_tokens == 12 and c.output_tokens == 5
 

@@ -8,7 +8,7 @@ to the stage of your pipeline that made it.
 ```python
 import praximetry as px
 
-px.init(project="my-agent")   # auto-instruments openai/anthropic/litellm/gemini SDKs
+px.init(project="my-agent")   # instruments installed SDKs
 
 @px.stage("summarize")
 def summarize(text):

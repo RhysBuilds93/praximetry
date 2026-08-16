@@ -1,6 +1,4 @@
-"""Try:
-python -m praximetry.examples.workflows.supervisor_delegation
-"""
+"""Run with `python -m praximetry.examples.workflows.supervisor_delegation`."""
 
 import asyncio
 
