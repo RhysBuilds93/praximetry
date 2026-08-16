@@ -22,7 +22,8 @@ _TABLES: dict[str, list[tuple[str, str]]] = {
     "calls": [
         ("id", "TEXT PRIMARY KEY"), ("run_id", "TEXT"), ("parent_call_id", "TEXT"),
         ("stage", "TEXT"), ("provider", "TEXT"), ("model", "TEXT"),
-        ("messages", "TEXT"), ("response_text", "TEXT"),
+        ("messages", "TEXT"), ("output_text", "TEXT"), ("reasoning_text", "TEXT"),
+        ("tool_calls", "TEXT"), ("structured_output", "TEXT"), ("content_parts", "TEXT"),
         ("input_tokens", "INTEGER"), ("output_tokens", "INTEGER"),
         ("cost_usd", "REAL"), ("latency_ms", "REAL"),
         ("ts", "REAL"), ("error", "TEXT"), ("metadata", "TEXT"),
@@ -99,11 +100,14 @@ class Store:
         with self._conn() as c:
             c.execute(
                 """INSERT OR REPLACE INTO calls
-                   (id, run_id, parent_call_id, stage, provider, model, messages, response_text,
+                   (id, run_id, parent_call_id, stage, provider, model, messages,
+                    output_text, reasoning_text, tool_calls, structured_output, content_parts,
                     input_tokens, output_tokens, cost_usd, latency_ms, ts, error, metadata)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (call.id, call.run_id, call.parent_call_id, call.stage, call.provider, call.model,
-                 json.dumps(call.messages), call.response_text,
+                 json.dumps(call.messages), call.output_text, call.reasoning_text,
+                 json.dumps(call.tool_calls), json.dumps(call.structured_output),
+                 json.dumps(call.content_parts),
                  call.input_tokens, call.output_tokens, call.cost_usd, call.latency_ms,
                  call.ts, call.error, json.dumps(call.metadata)),
             )
@@ -170,6 +174,9 @@ class Store:
     def _row_to_call(r: sqlite3.Row) -> Call:
         d = dict(r)
         d["messages"] = json.loads(d["messages"] or "[]")
+        d["tool_calls"] = json.loads(d["tool_calls"] or "[]")
+        d["structured_output"] = json.loads(d["structured_output"]) if d.get("structured_output") else None
+        d["content_parts"] = json.loads(d["content_parts"] or "[]")
         d["metadata"] = json.loads(d["metadata"] or "{}")
         return Call(**d)
 
