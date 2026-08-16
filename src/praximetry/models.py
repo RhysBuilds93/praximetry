@@ -22,7 +22,11 @@ class Call(BaseModel):
     provider: str = "unknown"
     model: str = "unknown"
     messages: list[dict[str, Any]] = Field(default_factory=list)
-    response_text: str = ""
+    output_text: str = ""
+    reasoning_text: str = ""
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    structured_output: Any | None = None
+    content_parts: list[dict[str, Any]] = Field(default_factory=list)
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = 0.0
