@@ -4,6 +4,7 @@ Exercised against a stub FastAPI app + real TestClient (same pattern as
 test_eval_hosted.py) rather than mocking httpx — proves the request shape,
 auth header, and graceful-degradation behavior cloud_sync actually produces.
 """
+
 import logging
 
 import pytest
@@ -50,7 +51,10 @@ def _cloud_sync_isolation():
 def _make_run_and_call(stage="plan_action", messages=None):
     run = Run(project="test")
     call = Call(
-        run_id=run.id, stage=stage, provider="fake", model="gpt-4o",
+        run_id=run.id,
+        stage=stage,
+        provider="fake",
+        model="gpt-4o",
         messages=messages if messages is not None else [{"role": "user", "content": "hi"}],
         output_text="ok",
     )
@@ -147,7 +151,8 @@ def test_redaction_hook_strips_messages_before_push_but_not_locally(stub, monkey
 
     run = runtime.current_run()
     runtime.record_call(
-        provider="fake", model="gpt-4o",
+        provider="fake",
+        model="gpt-4o",
         messages=[{"role": "user", "content": "secret"}],
         output_text="ok",
     )
@@ -169,7 +174,8 @@ def test_record_call_enqueues_when_cloud_sync_running(stub):
     run = runtime.current_run()
     cloud_sync.note_run(run)
     runtime.record_call(
-        provider="fake", model="gpt-4o",
+        provider="fake",
+        model="gpt-4o",
         messages=[{"role": "user", "content": "hi"}],
         output_text="ok",
     )

@@ -19,6 +19,7 @@ Try:
     praximetry optimize --stage final_answer -m praximetry.examples.workflows.gaia_multihop
     praximetry apply --stage final_answer
 """
+
 from __future__ import annotations
 
 import json
@@ -68,10 +69,12 @@ VERBOSE_GUIDE = (
 def decompose(question: str) -> list[str]:
     messages = [
         {"role": "system", "content": VERBOSE_GUIDE},
-        {"role": "user", "content":
-            f"Available index keys:\n{json.dumps(sorted(INDEX), indent=4)}\n\n"
+        {
+            "role": "user",
+            "content": f"Available index keys:\n{json.dumps(sorted(INDEX), indent=4)}\n\n"
             "List the lookup keys needed, in order, comma-separated, using only "
-            f"keys from the list above and nothing else.\nQuestion: {question}"},
+            f"keys from the list above and nothing else.\nQuestion: {question}",
+        },
     ]
     raw = real_chat(default_model(), messages)
     return [k.strip() for k in raw.split(",") if k.strip() in INDEX]
@@ -87,9 +90,12 @@ def lookup(hops: list[str]) -> list[str]:
 def final_answer(question: str, evidence: list[str]) -> str:
     messages = [
         {"role": "system", "content": VERBOSE_GUIDE},
-        {"role": "user", "content":
-            "Evidence:\n" + "\n".join(evidence) +
-            f"\n\nGive only the final answer, no sentence.\nQuestion: {question}"},
+        {
+            "role": "user",
+            "content": "Evidence:\n"
+            + "\n".join(evidence)
+            + f"\n\nGive only the final answer, no sentence.\nQuestion: {question}",
+        },
     ]
     return real_chat(premium_model(), messages)
 

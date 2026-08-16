@@ -18,6 +18,7 @@ Try:
     praximetry optimize --stage localize -m praximetry.examples.workflows.swe_patch_agent
     praximetry apply --stage localize
 """
+
 from __future__ import annotations
 
 import praximetry as px
@@ -28,27 +29,17 @@ px.init(project="swe-patch")
 
 # A tiny repo with three real bugs.
 REPO: dict[str, str] = {
-    "stats.py": (
-        "def mean(xs):\n"
-        "    return sum(xs) / len(xs)\n"
-    ),
-    "text.py": (
-        "def truncate(s, n):\n"
-        "    return s[:n] + '...'\n"
-    ),
-    "dates.py": (
-        "def is_leap(y):\n"
-        "    return y % 4 == 0\n"
-    ),
+    "stats.py": ("def mean(xs):\n" "    return sum(xs) / len(xs)\n"),
+    "text.py": ("def truncate(s, n):\n" "    return s[:n] + '...'\n"),
+    "dates.py": ("def is_leap(y):\n" "    return y % 4 == 0\n"),
 }
 
 # The repo's own tests. Run for real against the patched source.
 TESTS = {
     "stats.py": lambda ns: ns["mean"]([]) == 0.0 and ns["mean"]([2, 4]) == 3.0,
     "text.py": lambda ns: ns["truncate"]("hi", 10) == "hi"
-                          and ns["truncate"]("abcdef", 3) == "abc...",
-    "dates.py": lambda ns: ns["is_leap"](2000) and not ns["is_leap"](1900)
-                           and ns["is_leap"](2024),
+    and ns["truncate"]("abcdef", 3) == "abc...",
+    "dates.py": lambda ns: ns["is_leap"](2000) and not ns["is_leap"](1900) and ns["is_leap"](2024),
 }
 
 # Prompt written the way they end up in real repos: a repo map on every call,
@@ -64,14 +55,17 @@ REPO_MAP = "\n\n".join(f"### {p}\n{src}" for p, src in REPO.items())
 
 FEW_SHOT = "".join(
     f"Example {i}: {issue} -> {path}\n"
-    for i, (issue, path) in enumerate([
-        ("crash averaging an empty list", "stats.py"),
-        ("truncate mangles short strings", "text.py"),
-        ("1900 reported as a leap year", "dates.py"),
-        ("mean() divides by zero", "stats.py"),
-        ("ellipsis added when not needed", "text.py"),
-        ("century leap rule ignored", "dates.py"),
-    ], start=1)
+    for i, (issue, path) in enumerate(
+        [
+            ("crash averaging an empty list", "stats.py"),
+            ("truncate mangles short strings", "text.py"),
+            ("1900 reported as a leap year", "dates.py"),
+            ("mean() divides by zero", "stats.py"),
+            ("ellipsis added when not needed", "text.py"),
+            ("century leap rule ignored", "dates.py"),
+        ],
+        start=1,
+    )
 )
 
 
@@ -79,9 +73,11 @@ FEW_SHOT = "".join(
 def localize(issue: str) -> str:
     messages = [
         {"role": "system", "content": RULES},
-        {"role": "user", "content":
-            f"Repository:\n{REPO_MAP}\n\n{FEW_SHOT}\nWhich file must change? "
-            f"Reply with exactly the filename, nothing else.\nIssue: {issue}"},
+        {
+            "role": "user",
+            "content": f"Repository:\n{REPO_MAP}\n\n{FEW_SHOT}\nWhich file must change? "
+            f"Reply with exactly the filename, nothing else.\nIssue: {issue}",
+        },
     ]
     raw = real_chat(premium_model(), messages).strip()
     return next((p for p in REPO if p in raw), raw)
@@ -91,10 +87,12 @@ def localize(issue: str) -> str:
 def propose_patch(path: str, issue: str) -> str:
     messages = [
         {"role": "system", "content": RULES},
-        {"role": "user", "content":
-            f"File {path}:\n{REPO.get(path, '')}\n\nRewrite it to fix the issue below. "
+        {
+            "role": "user",
+            "content": f"File {path}:\n{REPO.get(path, '')}\n\nRewrite it to fix the issue below. "
             "Return the complete file contents only, no markdown fences, no prose.\n"
-            f"Issue: {issue}"},
+            f"Issue: {issue}",
+        },
     ]
     return real_chat(default_model(), messages)
 

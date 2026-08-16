@@ -26,6 +26,7 @@ duration of the stage call:
 Both paths raise `_CaptureSignal` to unwind before any real call completes,
 and converge on the same `CapturedRequest` shape.
 """
+
 from __future__ import annotations
 
 import asyncio

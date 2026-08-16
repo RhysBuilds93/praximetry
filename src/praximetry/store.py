@@ -1,4 +1,5 @@
 """SQLite-backed trace store. Zero-config, thread-safe, WAL mode."""
+
 from __future__ import annotations
 
 import json
@@ -15,29 +16,59 @@ from .models import Call, EvalResult, Experiment, Run
 # picked up on existing on-disk databases with no new migration code.
 _TABLES: dict[str, list[tuple[str, str]]] = {
     "runs": [
-        ("id", "TEXT PRIMARY KEY"), ("project", "TEXT"), ("name", "TEXT"),
-        ("started_at", "REAL"), ("ended_at", "REAL"),
-        ("experiment_id", "TEXT"), ("metadata", "TEXT"),
+        ("id", "TEXT PRIMARY KEY"),
+        ("project", "TEXT"),
+        ("name", "TEXT"),
+        ("started_at", "REAL"),
+        ("ended_at", "REAL"),
+        ("experiment_id", "TEXT"),
+        ("metadata", "TEXT"),
     ],
     "calls": [
-        ("id", "TEXT PRIMARY KEY"), ("run_id", "TEXT"), ("parent_call_id", "TEXT"),
-        ("stage", "TEXT"), ("provider", "TEXT"), ("model", "TEXT"),
-        ("messages", "TEXT"), ("output_text", "TEXT"), ("reasoning_text", "TEXT"),
-        ("tool_calls", "TEXT"), ("structured_output", "TEXT"), ("content_parts", "TEXT"),
-        ("input_tokens", "INTEGER"), ("output_tokens", "INTEGER"),
-        ("cost_usd", "REAL"), ("latency_ms", "REAL"),
-        ("ts", "REAL"), ("error", "TEXT"), ("metadata", "TEXT"),
+        ("id", "TEXT PRIMARY KEY"),
+        ("run_id", "TEXT"),
+        ("parent_call_id", "TEXT"),
+        ("stage", "TEXT"),
+        ("provider", "TEXT"),
+        ("model", "TEXT"),
+        ("messages", "TEXT"),
+        ("output_text", "TEXT"),
+        ("reasoning_text", "TEXT"),
+        ("tool_calls", "TEXT"),
+        ("structured_output", "TEXT"),
+        ("content_parts", "TEXT"),
+        ("input_tokens", "INTEGER"),
+        ("output_tokens", "INTEGER"),
+        ("cost_usd", "REAL"),
+        ("latency_ms", "REAL"),
+        ("ts", "REAL"),
+        ("error", "TEXT"),
+        ("metadata", "TEXT"),
     ],
     "eval_results": [
-        ("id", "TEXT PRIMARY KEY"), ("experiment_id", "TEXT"), ("run_id", "TEXT"),
-        ("stage", "TEXT"), ("example_id", "TEXT"), ("scorer", "TEXT"),
-        ("score", "REAL"), ("passed", "INTEGER"), ("detail", "TEXT"), ("ts", "REAL"),
+        ("id", "TEXT PRIMARY KEY"),
+        ("experiment_id", "TEXT"),
+        ("run_id", "TEXT"),
+        ("stage", "TEXT"),
+        ("example_id", "TEXT"),
+        ("scorer", "TEXT"),
+        ("score", "REAL"),
+        ("passed", "INTEGER"),
+        ("detail", "TEXT"),
+        ("ts", "REAL"),
     ],
     "experiments": [
-        ("id", "TEXT PRIMARY KEY"), ("name", "TEXT"), ("stage", "TEXT"),
-        ("variant", "TEXT"), ("created_at", "REAL"),
-        ("quality", "REAL"), ("pass_rate", "REAL"), ("cost_usd", "REAL"),
-        ("input_tokens", "INTEGER"), ("output_tokens", "INTEGER"), ("baseline", "INTEGER"),
+        ("id", "TEXT PRIMARY KEY"),
+        ("name", "TEXT"),
+        ("stage", "TEXT"),
+        ("variant", "TEXT"),
+        ("created_at", "REAL"),
+        ("quality", "REAL"),
+        ("pass_rate", "REAL"),
+        ("cost_usd", "REAL"),
+        ("input_tokens", "INTEGER"),
+        ("output_tokens", "INTEGER"),
+        ("baseline", "INTEGER"),
     ],
 }
 
@@ -46,12 +77,16 @@ _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_calls_stage ON calls(stage);",
 ]
 
-_SCHEMA = "\n".join(
-    f"CREATE TABLE IF NOT EXISTS {table} ("
-    + ", ".join(f"{col} {type_}" for col, type_ in columns)
-    + ");"
-    for table, columns in _TABLES.items()
-) + "\n" + "\n".join(_INDEXES)
+_SCHEMA = (
+    "\n".join(
+        f"CREATE TABLE IF NOT EXISTS {table} ("
+        + ", ".join(f"{col} {type_}" for col, type_ in columns)
+        + ");"
+        for table, columns in _TABLES.items()
+    )
+    + "\n"
+    + "\n".join(_INDEXES)
+)
 
 
 class Store:
@@ -92,8 +127,15 @@ class Store:
         with self._conn() as c:
             c.execute(
                 "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?)",
-                (run.id, run.project, run.name, run.started_at, run.ended_at,
-                 run.experiment_id, json.dumps(run.metadata)),
+                (
+                    run.id,
+                    run.project,
+                    run.name,
+                    run.started_at,
+                    run.ended_at,
+                    run.experiment_id,
+                    json.dumps(run.metadata),
+                ),
             )
 
     def save_call(self, call: Call) -> None:
@@ -104,29 +146,64 @@ class Store:
                     output_text, reasoning_text, tool_calls, structured_output, content_parts,
                     input_tokens, output_tokens, cost_usd, latency_ms, ts, error, metadata)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (call.id, call.run_id, call.parent_call_id, call.stage, call.provider, call.model,
-                 json.dumps(call.messages), call.output_text, call.reasoning_text,
-                 json.dumps(call.tool_calls), json.dumps(call.structured_output),
-                 json.dumps(call.content_parts),
-                 call.input_tokens, call.output_tokens, call.cost_usd, call.latency_ms,
-                 call.ts, call.error, json.dumps(call.metadata)),
+                (
+                    call.id,
+                    call.run_id,
+                    call.parent_call_id,
+                    call.stage,
+                    call.provider,
+                    call.model,
+                    json.dumps(call.messages),
+                    call.output_text,
+                    call.reasoning_text,
+                    json.dumps(call.tool_calls),
+                    json.dumps(call.structured_output),
+                    json.dumps(call.content_parts),
+                    call.input_tokens,
+                    call.output_tokens,
+                    call.cost_usd,
+                    call.latency_ms,
+                    call.ts,
+                    call.error,
+                    json.dumps(call.metadata),
+                ),
             )
 
     def save_eval_result(self, r: EvalResult) -> None:
         with self._conn() as c:
             c.execute(
                 "INSERT OR REPLACE INTO eval_results VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (r.id, r.experiment_id, r.run_id, r.stage, r.example_id,
-                 r.scorer, r.score, int(r.passed), r.detail, r.ts),
+                (
+                    r.id,
+                    r.experiment_id,
+                    r.run_id,
+                    r.stage,
+                    r.example_id,
+                    r.scorer,
+                    r.score,
+                    int(r.passed),
+                    r.detail,
+                    r.ts,
+                ),
             )
 
     def save_experiment(self, e: Experiment) -> None:
         with self._conn() as c:
             c.execute(
                 "INSERT OR REPLACE INTO experiments VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (e.id, e.name, e.stage, json.dumps(e.variant), e.created_at,
-                 e.quality, e.pass_rate, e.cost_usd,
-                 e.input_tokens, e.output_tokens, int(e.baseline)),
+                (
+                    e.id,
+                    e.name,
+                    e.stage,
+                    json.dumps(e.variant),
+                    e.created_at,
+                    e.quality,
+                    e.pass_rate,
+                    e.cost_usd,
+                    e.input_tokens,
+                    e.output_tokens,
+                    int(e.baseline),
+                ),
             )
 
     # -- reads -------------------------------------------------------------
@@ -146,8 +223,13 @@ class Store:
         d["metadata"] = json.loads(d["metadata"] or "{}")
         return Run(**d)
 
-    def calls(self, run_id: str | None = None, stage: str | None = None,
-              project: str | None = None, limit: int = 1000) -> list[Call]:
+    def calls(
+        self,
+        run_id: str | None = None,
+        stage: str | None = None,
+        project: str | None = None,
+        limit: int = 1000,
+    ) -> list[Call]:
         # `project` lives on runs, not calls, so filtering by it needs a join —
         # keep that join out of the common case (SELECT calls.* avoids column
         # collisions either way, but the plain query stays index-friendly).
@@ -175,34 +257,48 @@ class Store:
         d = dict(r)
         d["messages"] = json.loads(d["messages"] or "[]")
         d["tool_calls"] = json.loads(d["tool_calls"] or "[]")
-        d["structured_output"] = json.loads(d["structured_output"]) if d.get("structured_output") else None
+        d["structured_output"] = (
+            json.loads(d["structured_output"]) if d.get("structured_output") else None
+        )
         d["content_parts"] = json.loads(d["content_parts"] or "[]")
         d["metadata"] = json.loads(d["metadata"] or "{}")
         return Call(**d)
 
     def stage_summary(self) -> list[dict[str, Any]]:
-        rows = self._conn().execute(
-            """SELECT stage, model, COUNT(*) n, SUM(input_tokens) tin,
+        rows = (
+            self._conn()
+            .execute(
+                """SELECT stage, model, COUNT(*) n, SUM(input_tokens) tin,
                       SUM(output_tokens) tout, SUM(cost_usd) cost, AVG(latency_ms) lat
                FROM calls GROUP BY stage, model ORDER BY cost DESC"""
-        ).fetchall()
+            )
+            .fetchall()
+        )
         return [dict(r) for r in rows]
 
     def totals(self) -> dict[str, Any]:
-        r = self._conn().execute(
-            """SELECT COUNT(*) n, COALESCE(SUM(input_tokens),0) tin,
+        r = (
+            self._conn()
+            .execute(
+                """SELECT COUNT(*) n, COALESCE(SUM(input_tokens),0) tin,
                       COALESCE(SUM(output_tokens),0) tout,
                       COALESCE(SUM(cost_usd),0) cost FROM calls"""
-        ).fetchone()
+            )
+            .fetchone()
+        )
         return dict(r)
 
     def cost_over_time(self, bucket_seconds: int = 3600) -> list[dict[str, Any]]:
-        rows = self._conn().execute(
-            """SELECT CAST(ts / ? AS INTEGER) * ? bucket,
+        rows = (
+            self._conn()
+            .execute(
+                """SELECT CAST(ts / ? AS INTEGER) * ? bucket,
                       SUM(cost_usd) cost, SUM(input_tokens + output_tokens) tokens
                FROM calls GROUP BY bucket ORDER BY bucket""",
-            (bucket_seconds, bucket_seconds),
-        ).fetchall()
+                (bucket_seconds, bucket_seconds),
+            )
+            .fetchall()
+        )
         return [dict(r) for r in rows]
 
     def experiments(self, stage: str | None = None) -> list[Experiment]:
