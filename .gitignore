@@ -228,3 +228,4 @@ graphify-out/cache/
 graphify-out/cost.json
 .worktrees/
 .claude/
+docs/superpowers/
