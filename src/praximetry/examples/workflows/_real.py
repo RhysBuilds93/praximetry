@@ -26,8 +26,17 @@ actually serves -- there's no cross-provider default that works everywhere.
 from __future__ import annotations
 
 import os
+import re
 
 from openai import OpenAI
+
+# Some reasoning models (e.g. gpt-oss served over an OpenAI-compatible
+# endpoint) put their chain-of-thought directly in `message.content`,
+# wrapped in <reasoning>...</reasoning>, instead of a separate reasoning
+# field. Left in, that text becomes part of a stage's *return value* and
+# gets fed forward as another stage's input (see gather_signals ->
+# correlate), so it has to be stripped here rather than at each call site.
+_REASONING_TAG = re.compile(r"<reasoning>.*?</reasoning>", re.DOTALL)
 
 # Change the fallback below to match whatever your AI_ENDPOINT serves, e.g.
 # "gpt-4o-mini" for OpenAI, "claude-haiku-4-5-20251001" for an
@@ -67,4 +76,5 @@ def premium_model() -> str:
 def real_chat(model: str, messages: list[dict]) -> str:
     """Call your configured provider. Same call a stage in your own agent makes."""
     completion = _get_client().chat.completions.create(model=model, messages=messages)
-    return completion.choices[0].message.content
+    content = completion.choices[0].message.content
+    return _REASONING_TAG.sub("", content).strip()
