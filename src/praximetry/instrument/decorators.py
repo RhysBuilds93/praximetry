@@ -1,9 +1,11 @@
 """Developer-facing decorators. Minimal input: one decorator per agent stage."""
+
 from __future__ import annotations
 
 import functools
 import inspect
-from typing import Any, Callable, TypeVar, overload
+from typing import Any, TypeVar, overload
+from collections.abc import Callable
 
 from ..runtime import STAGE_REGISTRY, policy_scope, stage_context
 
@@ -38,10 +40,12 @@ def stage(name: Any = None) -> Any:
 
 def _wrap(fn: Callable[..., Any], stage_name: str) -> Any:
     if inspect.iscoroutinefunction(fn):
+
         @functools.wraps(fn)
         async def awrapper(*args: Any, **kwargs: Any) -> Any:
             with stage_context(stage_name), policy_scope(stage_name):
                 return await fn(*args, **kwargs)
+
         awrapper.__praximetry_stage__ = stage_name  # type: ignore[attr-defined]
         STAGE_REGISTRY[stage_name] = awrapper
         return awrapper

@@ -1,10 +1,12 @@
 """Runtime context: current run, current stage, active experiment overrides."""
+
 from __future__ import annotations
 
 import contextvars
 import time
 from contextlib import contextmanager
-from typing import Any, Callable, ContextManager
+from typing import Any, ContextManager
+from collections.abc import Callable
 
 from . import cloud_sync
 from .config import get_config
@@ -16,7 +18,9 @@ _stage_stack: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
     "stage_stack", default=()
 )
 # Most recently recorded call; asyncio.gather/create_task copy it so fan-out calls inherit the same parent.
-_current_call: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_call", default=None)
+_current_call: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "current_call", default=None
+)
 _overrides: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "overrides", default=None
 )

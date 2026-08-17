@@ -2,6 +2,7 @@
 
 Prices as of mid-2026. Update via PRICING or register_pricing().
 """
+
 from __future__ import annotations
 
 # (input $/MTok, output $/MTok)

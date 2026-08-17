@@ -6,6 +6,7 @@ through praximetry's patches — no network needed.
 
 The final test is a true live smoke test, opt-in via PRAXIMETRY_LIVE=1 + API keys.
 """
+
 import json
 import os
 
@@ -20,13 +21,17 @@ auto_instrument()
 
 # -- OpenAI ------------------------------------------------------------------
 
+
 def _openai_json(text="mocked reply", tin=21, tout=7):
     return {
-        "id": "chatcmpl-1", "object": "chat.completion", "created": 0, "model": "gpt-4o",
-        "choices": [{"index": 0, "finish_reason": "stop",
-                     "message": {"role": "assistant", "content": text}}],
-        "usage": {"prompt_tokens": tin, "completion_tokens": tout,
-                  "total_tokens": tin + tout},
+        "id": "chatcmpl-1",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "gpt-4o",
+        "choices": [
+            {"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": text}}
+        ],
+        "usage": {"prompt_tokens": tin, "completion_tokens": tout, "total_tokens": tin + tout},
     }
 
 
@@ -36,7 +41,8 @@ def test_openai_real_client_buffered():
     transport = httpx.MockTransport(lambda req: httpx.Response(200, json=_openai_json()))
     client = OpenAI(api_key="test", http_client=httpx.Client(transport=transport))
     resp = client.chat.completions.create(
-        model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
+        model="gpt-4o", messages=[{"role": "user", "content": "hi"}]
+    )
     assert resp.choices[0].message.content == "mocked reply"
 
     call = get_store().calls()[0]
@@ -54,19 +60,37 @@ def test_openai_real_client_streaming():
 
     chunk = {"id": "c", "object": "chat.completion.chunk", "created": 0, "model": "gpt-4o"}
     body = (
-        sse({**chunk, "choices": [{"index": 0, "delta": {"content": "str"}, "finish_reason": None}]})
-        + sse({**chunk, "choices": [{"index": 0, "delta": {"content": "eamed"}, "finish_reason": None}]})
-        + sse({**chunk, "choices": [],
-               "usage": {"prompt_tokens": 9, "completion_tokens": 2, "total_tokens": 11}})
+        sse(
+            {**chunk, "choices": [{"index": 0, "delta": {"content": "str"}, "finish_reason": None}]}
+        )
+        + sse(
+            {
+                **chunk,
+                "choices": [{"index": 0, "delta": {"content": "eamed"}, "finish_reason": None}],
+            }
+        )
+        + sse(
+            {
+                **chunk,
+                "choices": [],
+                "usage": {"prompt_tokens": 9, "completion_tokens": 2, "total_tokens": 11},
+            }
+        )
         + "data: [DONE]\n\n"
     )
-    transport = httpx.MockTransport(lambda req: httpx.Response(
-        200, content=body.encode(), headers={"content-type": "text/event-stream"}))
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(
+            200, content=body.encode(), headers={"content-type": "text/event-stream"}
+        )
+    )
     client = OpenAI(api_key="test", http_client=httpx.Client(transport=transport))
 
     stream = client.chat.completions.create(
-        model="gpt-4o", messages=[{"role": "user", "content": "hi"}],
-        stream=True, stream_options={"include_usage": True})
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "hi"}],
+        stream=True,
+        stream_options={"include_usage": True},
+    )
     text = "".join(c.choices[0].delta.content or "" for c in stream if c.choices)
     assert text == "streamed"
 
@@ -77,11 +101,17 @@ def test_openai_real_client_streaming():
 
 # -- Anthropic ----------------------------------------------------------------
 
+
 def _anthropic_json(text="claude says hi", tin=15, tout=5):
     return {
-        "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-sonnet-5",
-        "content": [{"type": "text", "text": text}], "stop_reason": "end_turn",
-        "stop_sequence": None, "usage": {"input_tokens": tin, "output_tokens": tout},
+        "id": "msg_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-sonnet-5",
+        "content": [{"type": "text", "text": text}],
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "usage": {"input_tokens": tin, "output_tokens": tout},
     }
 
 
@@ -91,8 +121,11 @@ def test_anthropic_real_client_buffered():
     transport = httpx.MockTransport(lambda req: httpx.Response(200, json=_anthropic_json()))
     client = Anthropic(api_key="test", http_client=httpx.Client(transport=transport))
     resp = client.messages.create(
-        model="claude-sonnet-5", max_tokens=64, system="be brief",
-        messages=[{"role": "user", "content": "hi"}])
+        model="claude-sonnet-5",
+        max_tokens=64,
+        system="be brief",
+        messages=[{"role": "user", "content": "hi"}],
+    )
     assert resp.content[0].text == "claude says hi"
 
     call = get_store().calls()[0]
@@ -107,14 +140,15 @@ def test_anthropic_real_client_async_buffered():
 
     from anthropic import AsyncAnthropic
 
-    transport = httpx.MockTransport(lambda req: httpx.Response(200, json=_anthropic_json("async hi")))
-    client = AsyncAnthropic(api_key="test",
-                            http_client=httpx.AsyncClient(transport=transport))
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(200, json=_anthropic_json("async hi"))
+    )
+    client = AsyncAnthropic(api_key="test", http_client=httpx.AsyncClient(transport=transport))
 
     async def go():
         return await client.messages.create(
-            model="claude-sonnet-5", max_tokens=64,
-            messages=[{"role": "user", "content": "hi"}])
+            model="claude-sonnet-5", max_tokens=64, messages=[{"role": "user", "content": "hi"}]
+        )
 
     resp = asyncio.run(go())
     assert resp.content[0].text == "async hi"
@@ -122,6 +156,7 @@ def test_anthropic_real_client_async_buffered():
 
 
 # -- override path through a real client --------------------------------------
+
 
 def test_override_rewrites_model_through_real_client():
     from openai import OpenAI
@@ -132,19 +167,20 @@ def test_override_rewrites_model_through_real_client():
         seen["model"] = json.loads(req.content)["model"]
         return httpx.Response(200, json=_openai_json())
 
-    client = OpenAI(api_key="test",
-                    http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    client = OpenAI(
+        api_key="test", http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
     from praximetry.runtime import override_context
 
     with override_context(model="gpt-4o-mini"):
-        client.chat.completions.create(model="gpt-4o",
-                                       messages=[{"role": "user", "content": "hi"}])
+        client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
     # The override changed the model actually sent over the wire.
     assert seen["model"] == "gpt-4o-mini"
     assert get_store().calls()[0].model == "gpt-4o-mini"
 
 
 # -- true live smoke test (opt-in) --------------------------------------------
+
 
 @pytest.mark.skipif(
     not (os.environ.get("PRAXIMETRY_LIVE") and os.environ.get("ANTHROPIC_API_KEY")),
@@ -154,8 +190,8 @@ def test_live_anthropic_smoke():
     from anthropic import Anthropic
 
     Anthropic().messages.create(
-        model="claude-haiku-4-5", max_tokens=16,
-        messages=[{"role": "user", "content": "Say OK"}])
+        model="claude-haiku-4-5", max_tokens=16, messages=[{"role": "user", "content": "Say OK"}]
+    )
     call = get_store().calls()[0]
     assert call.input_tokens > 0 and call.output_tokens > 0 and call.cost_usd > 0
     assert call.output_text

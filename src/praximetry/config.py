@@ -1,4 +1,5 @@
 """Global runtime configuration for praximetry."""
+
 from __future__ import annotations
 
 import os
@@ -14,7 +15,7 @@ class Config:
     enabled: bool = True
 
     @classmethod
-    def from_env(cls) -> "Config":
+    def from_env(cls) -> Config:
         cfg = cls()
         if p := os.environ.get("PRAXIMETRY_PROJECT"):
             cfg.project = p

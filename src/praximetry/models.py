@@ -1,4 +1,5 @@
 """Core data models."""
+
 from __future__ import annotations
 
 import time
@@ -78,7 +79,9 @@ class Experiment(BaseModel):
     id: str = Field(default_factory=_id)
     name: str = ""
     stage: str | None = None
-    variant: dict[str, Any] = Field(default_factory=dict)  # e.g. {"model": "...", "compact_prompts": true}
+    variant: dict[str, Any] = Field(
+        default_factory=dict
+    )  # e.g. {"model": "...", "compact_prompts": true}
     created_at: float = Field(default_factory=time.time)
     quality: float | None = None  # mean eval score 0..1
     pass_rate: float | None = None

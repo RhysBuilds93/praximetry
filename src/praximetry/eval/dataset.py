@@ -3,6 +3,7 @@
 `input` may be a scalar (passed as single positional arg), a list (positional
 args) or a dict (keyword args) — matching how the stage function is called.
 """
+
 from __future__ import annotations
 
 import json
@@ -31,7 +32,7 @@ class Dataset(BaseModel):
     path: str | None = None
 
     @classmethod
-    def load(cls, path: str | Path) -> "Dataset":
+    def load(cls, path: str | Path) -> Dataset:
         path = Path(path)
         examples = []
         for i, line in enumerate(path.read_text().splitlines()):
@@ -43,7 +44,7 @@ class Dataset(BaseModel):
             examples.append(Example(**d))
         return cls(examples=examples, path=str(path))
 
-    def for_stage(self, stage: str) -> "Dataset":
+    def for_stage(self, stage: str) -> Dataset:
         return Dataset(examples=[e for e in self.examples if e.stage == stage], path=self.path)
 
     @property

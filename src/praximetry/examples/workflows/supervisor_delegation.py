@@ -1,6 +1,7 @@
 """Try:
-    python -m praximetry.examples.workflows.supervisor_delegation
+python -m praximetry.examples.workflows.supervisor_delegation
 """
+
 import asyncio
 
 import praximetry as px
@@ -36,7 +37,12 @@ def _agent(stage_name: str):
         await asyncio.sleep(0)
         return real_chat(
             default_model(),
-            [{"role": "user", "content": f"As the {stage_name}, give a one-line finding for: {request}"}],
+            [
+                {
+                    "role": "user",
+                    "content": f"As the {stage_name}, give a one-line finding for: {request}",
+                }
+            ],
         )
 
     return agent
@@ -55,7 +61,12 @@ def synthesize(request: str, findings: list[str]) -> str:
     joined = " ".join(findings)
     return real_chat(
         premium_model(),
-        [{"role": "user", "content": f"Request: {request}\nFindings: {joined}\nSynthesize a reply."}],
+        [
+            {
+                "role": "user",
+                "content": f"Request: {request}\nFindings: {joined}\nSynthesize a reply.",
+            }
+        ],
     )
 
 

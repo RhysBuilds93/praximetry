@@ -3,6 +3,7 @@
 Kept separate from capture mechanism (patch.py / capture.py) so adapters stay
 unit-testable against real SDK response objects without any monkeypatching.
 """
+
 from __future__ import annotations
 
 import json
@@ -59,13 +60,19 @@ class OpenAIAdapter(OutputAdapter):
         message = _g(choices[0], "message")
         text = _g(message, "content", default="") or ""
         tool_calls = [
-            ToolCall(id=tc.id, name=tc.function.name,
-                     arguments=json.loads(tc.function.arguments or "{}"))
+            ToolCall(
+                id=tc.id, name=tc.function.name, arguments=json.loads(tc.function.arguments or "{}")
+            )
             for tc in (_g(message, "tool_calls", default=[]) or [])
         ]
         output_text, reasoning_text = split_embedded_reasoning(text, model)
-        return NormalizedOutput(output_text=output_text, reasoning_text=reasoning_text,
-                                 tool_calls=tool_calls, tokens_in=tin, tokens_out=tout)
+        return NormalizedOutput(
+            output_text=output_text,
+            reasoning_text=reasoning_text,
+            tool_calls=tool_calls,
+            tokens_in=tin,
+            tokens_out=tout,
+        )
 
     def accumulate(self, chunk: Any, state: dict[str, Any]) -> None:
         state.setdefault("text", "")
@@ -76,7 +83,9 @@ class OpenAIAdapter(OutputAdapter):
             state["tout"] = state.get("tout", 0) + (1 if delta else 0)
         usage = getattr(chunk, "usage", None)
         if usage is not None:
-            state["tin"] = getattr(usage, "prompt_tokens", state.get("tin", 0)) or state.get("tin", 0)
+            state["tin"] = getattr(usage, "prompt_tokens", state.get("tin", 0)) or state.get(
+                "tin", 0
+            )
             ct = getattr(usage, "completion_tokens", None)
             if ct is not None:
                 state["tout"] = ct
@@ -84,8 +93,12 @@ class OpenAIAdapter(OutputAdapter):
     def finalize_stream(self, state: dict[str, Any]) -> NormalizedOutput:
         model = state.get("model", "")
         output_text, reasoning_text = split_embedded_reasoning(state.get("text", ""), model)
-        return NormalizedOutput(output_text=output_text, reasoning_text=reasoning_text,
-                                 tokens_in=state.get("tin", 0), tokens_out=state.get("tout", 0))
+        return NormalizedOutput(
+            output_text=output_text,
+            reasoning_text=reasoning_text,
+            tokens_in=state.get("tin", 0),
+            tokens_out=state.get("tout", 0),
+        )
 
 
 class AnthropicAdapter(OutputAdapter):
@@ -110,19 +123,27 @@ class AnthropicAdapter(OutputAdapter):
             elif btype == "thinking":
                 reasoning_text += getattr(block, "thinking", "") or ""
             elif btype == "tool_use":
-                tool_calls.append(ToolCall(id=block.id, name=block.name,
-                                            arguments=dict(block.input)))
+                tool_calls.append(
+                    ToolCall(id=block.id, name=block.name, arguments=dict(block.input))
+                )
         tin = _g(resp, "usage", "input_tokens", default=0) or 0
         tout = _g(resp, "usage", "output_tokens", default=0) or 0
-        return NormalizedOutput(output_text=output_text, reasoning_text=reasoning_text,
-                                 tool_calls=tool_calls, tokens_in=tin, tokens_out=tout)
+        return NormalizedOutput(
+            output_text=output_text,
+            reasoning_text=reasoning_text,
+            tool_calls=tool_calls,
+            tokens_in=tin,
+            tokens_out=tout,
+        )
 
     def accumulate(self, chunk: Any, state: dict[str, Any]) -> None:
         state.setdefault("text", "")
         state.setdefault("reasoning", "")
         etype = getattr(chunk, "type", "")
         if etype == "message_start":
-            state["tin"] = _g(chunk, "message", "usage", "input_tokens", default=state.get("tin", 0))
+            state["tin"] = _g(
+                chunk, "message", "usage", "input_tokens", default=state.get("tin", 0)
+            )
         elif etype == "content_block_delta":
             delta = getattr(chunk, "delta", None)
             dtype = getattr(delta, "type", "")
@@ -136,9 +157,12 @@ class AnthropicAdapter(OutputAdapter):
                 state["tout"] = out
 
     def finalize_stream(self, state: dict[str, Any]) -> NormalizedOutput:
-        return NormalizedOutput(output_text=state.get("text", ""),
-                                 reasoning_text=state.get("reasoning", ""),
-                                 tokens_in=state.get("tin", 0), tokens_out=state.get("tout", 0))
+        return NormalizedOutput(
+            output_text=state.get("text", ""),
+            reasoning_text=state.get("reasoning", ""),
+            tokens_in=state.get("tin", 0),
+            tokens_out=state.get("tout", 0),
+        )
 
 
 ADAPTERS: dict[str, OutputAdapter] = {
@@ -154,7 +178,9 @@ class GeminiAdapter(OutputAdapter):
     def get_messages(self, kwargs: dict[str, Any]) -> list[dict[str, Any]]:
         contents = kwargs.get("contents")
         config = kwargs.get("config")
-        msgs = [{"role": "user", "content": contents if isinstance(contents, str) else str(contents)}]
+        msgs = [
+            {"role": "user", "content": contents if isinstance(contents, str) else str(contents)}
+        ]
         sys_instr = _g(config, "system_instruction") if config is not None else None
         if isinstance(sys_instr, str):
             msgs = [{"role": "system", "content": sys_instr}] + msgs
@@ -174,12 +200,20 @@ class GeminiAdapter(OutputAdapter):
                         text += part.text
                 fc = getattr(part, "function_call", None)
                 if fc is not None:
-                    tool_calls.append(ToolCall(id=uuid.uuid4().hex[:16], name=fc.name,
-                                                arguments=dict(fc.args or {})))
+                    tool_calls.append(
+                        ToolCall(
+                            id=uuid.uuid4().hex[:16], name=fc.name, arguments=dict(fc.args or {})
+                        )
+                    )
         tin = _g(resp, "usage_metadata", "prompt_token_count", default=0) or 0
         tout = _g(resp, "usage_metadata", "candidates_token_count", default=0) or 0
-        return NormalizedOutput(output_text=text, reasoning_text=reasoning_text,
-                                 tool_calls=tool_calls, tokens_in=tin, tokens_out=tout)
+        return NormalizedOutput(
+            output_text=text,
+            reasoning_text=reasoning_text,
+            tool_calls=tool_calls,
+            tokens_in=tin,
+            tokens_out=tout,
+        )
 
     def accumulate(self, chunk: Any, state: dict[str, Any]) -> None:
         state.setdefault("text", "")
@@ -192,8 +226,11 @@ class GeminiAdapter(OutputAdapter):
             state["tout"] = tout
 
     def finalize_stream(self, state: dict[str, Any]) -> NormalizedOutput:
-        return NormalizedOutput(output_text=state.get("text", ""),
-                                 tokens_in=state.get("tin", 0), tokens_out=state.get("tout", 0))
+        return NormalizedOutput(
+            output_text=state.get("text", ""),
+            tokens_in=state.get("tin", 0),
+            tokens_out=state.get("tout", 0),
+        )
 
 
 ADAPTERS["gemini"] = GeminiAdapter()

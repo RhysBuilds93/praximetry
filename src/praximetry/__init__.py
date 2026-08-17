@@ -9,6 +9,7 @@ Quickstart:
 
     # then:  praximetry summary
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -26,9 +27,17 @@ from .runtime import current_run, record_call, run_context
 
 __version__ = "0.1.0"
 __all__ = [
-    "init", "stage", "record_call", "run_context", "current_run",
-    "register_pricing", "instrument_otel", "record_spans",
-    "Call", "get_config", "CloudError",
+    "init",
+    "stage",
+    "record_call",
+    "run_context",
+    "current_run",
+    "register_pricing",
+    "instrument_otel",
+    "record_spans",
+    "Call",
+    "get_config",
+    "CloudError",
 ]
 
 
