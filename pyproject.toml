@@ -45,6 +45,7 @@ dev = [
 
 [project.scripts]
 praximetry = "praximetry.cli:app"
+px = "praximetry.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/praximetry"]

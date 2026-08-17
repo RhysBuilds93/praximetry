@@ -153,6 +153,12 @@ class CloudClient:
         )
         return resp.json()
 
+    def fetch_eval_default(self) -> dict | None:
+        resp = self._client.get(self._url("/api/eval/default"), headers=self._headers)
+        if resp.status_code == 404:
+            return None
+        return self._check(resp).json()
+
     def save_eval_config(self, project: str, fail_under: float, stage: str | None = None) -> dict:
         """POST /api/eval/config — saves a project default (stage omitted) or a
         per-stage override."""
