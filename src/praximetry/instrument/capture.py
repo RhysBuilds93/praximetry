@@ -3,6 +3,7 @@ response gets parsed (OutputAdapter). Split out because not every capture
 style is "patch a client method" — LangChain exposes a callback/event stream
 instead of a create() method to intercept.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod

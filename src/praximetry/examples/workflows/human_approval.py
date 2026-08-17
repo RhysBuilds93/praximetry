@@ -1,6 +1,7 @@
 """Try:
-    python -m praximetry.examples.workflows.human_approval
+python -m praximetry.examples.workflows.human_approval
 """
+
 import praximetry as px
 from praximetry import runtime
 
@@ -33,12 +34,16 @@ def await_approval(action: str) -> str:
 
 @px.stage("execute")
 def execute(action: str) -> str:
-    return real_chat(default_model(), [{"role": "user", "content": f"Confirm execution of: {action}"}])
+    return real_chat(
+        default_model(), [{"role": "user", "content": f"Confirm execution of: {action}"}]
+    )
 
 
 @px.stage("discard")
 def discard(action: str) -> str:
-    return real_chat(default_model(), [{"role": "user", "content": f"Log the rejection of: {action}"}])
+    return real_chat(
+        default_model(), [{"role": "user", "content": f"Log the rejection of: {action}"}]
+    )
 
 
 def handle(request: str) -> str:
