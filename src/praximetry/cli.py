@@ -50,6 +50,12 @@ def eval_cmd(
         "(default: the hosted project/stage config, or 0.9 "
         "for plain --stage runs)",
     ),
+    config: str = typer.Option(
+        None,
+        "--config",
+        help="Path to a JSON file with {project, stage, module, fail_under}; "
+        "explicit CLI flags override values in the file",
+    ),
 ) -> None:
     """CI gate: capture the hosted golden corpus and have the cloud score it.
 
@@ -60,24 +66,61 @@ def eval_cmd(
     Exit 0 = passed, 1 = below --fail-under, 2 = the gate could not run (no
     key, empty corpus, nothing capturable, or the API call failed).
 
-    At least one of --stage/--project is required. --stage alone evaluates
-    just that stage. --project alone evaluates every stage under that project
-    and gates on the aggregate (unweighted mean of each stage's quality).
-    --stage and --project together narrows to one stage within a project.
+    With no --stage/--project/--config, runs the default saved from the
+    dashboard ("Save as default"); exits 2 if no default has been saved.
+    --stage alone evaluates just that stage. --project alone evaluates every
+    stage under that project and gates on the aggregate (unweighted mean of
+    each stage's quality). --stage and --project together narrows to one stage
+    within a project. --config loads a JSON file; any of --stage/--project/-m/
+    --fail-under given alongside override the file's values.
 
     Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (default localhost).
     """
+    import json
     import uuid
 
     from .eval import CaptureError, capture_request
     from .eval.hosted import EXIT_GATE_FAILED, EXIT_OK, EXIT_UNUSABLE, CloudError, client_from_env
 
+    if config:
+        try:
+            cfg = json.loads(Path(config).read_text())
+        except OSError as e:
+            typer.echo(f"error: could not read --config {config}: {e}")
+            raise typer.Exit(EXIT_UNUSABLE) from e
+        except json.JSONDecodeError as e:
+            typer.echo(f"error: --config {config} is not valid JSON: {e}")
+            raise typer.Exit(EXIT_UNUSABLE) from e
+        stage = stage if stage is not None else cfg.get("stage")
+        project = project if project is not None else cfg.get("project")
+        module = module if module is not None else cfg.get("module")
+        fail_under = fail_under if fail_under is not None else cfg.get("fail_under")
+
     if not stage and not project:
-        typer.echo("error: at least one of --stage/--project is required")
-        raise typer.Exit(EXIT_UNUSABLE)
+        try:
+            client = client_from_env()
+            default = client.fetch_eval_default()
+        except CloudError as e:
+            typer.echo(f"error: {e}")
+            raise typer.Exit(EXIT_UNUSABLE) from e
+        if default is None:
+            typer.echo(
+                "error: no --stage/--project given and no default saved — "
+                "set one in the dashboard (Save as default) or pass --config"
+            )
+            raise typer.Exit(EXIT_UNUSABLE)
+        stage = stage if stage is not None else default.get("stage")
+        project = project if project is not None else default.get("project")
+        fail_under = fail_under if fail_under is not None else default.get("fail_under")
+        typer.echo(f"using default: project={project}" + (f" stage={stage}" if stage else ""))
+    else:
+        try:
+            client = client_from_env()
+        except CloudError as e:
+            typer.echo(f"error: {e}")
+            raise typer.Exit(EXIT_UNUSABLE) from e
 
     try:
-        client = client_from_env()
         _import_module(module)
         dataset = client.fetch_corpus(stage=stage, project=project)
         scope = (
@@ -112,7 +155,6 @@ def eval_cmd(
                 )
 
         if project and not stage:
-            # Multi-stage run: gate on the aggregate across the whole project.
             results = client.fetch_results(project=project, experiment_id=experiment_id)
             for stage_name, stage_result in results["stages"].items():
                 typer.echo(
@@ -124,7 +166,6 @@ def eval_cmd(
                 fail_under = client.fetch_eval_config(project=project)["fail_under"]
             typer.echo(f"aggregate quality={quality:.2f}")
         else:
-            # Single-stage run (with or without --project narrowing it).
             result = push_results[stage]
             quality, pass_rate = result["quality"], result["pass_rate"]
             typer.echo(
