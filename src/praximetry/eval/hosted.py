@@ -13,6 +13,7 @@ Auth is the long-lived API key (`px_live_...`) in an `Authorization: Bearer`
 header, read from `PRAXIMETRY_API_KEY` — the same credential shape CI secrets
 already have, with no interactive flow to get stuck on in a pipeline.
 """
+
 from __future__ import annotations
 
 import os
@@ -58,12 +59,16 @@ class CloudClient:
     @staticmethod
     def _check(resp: httpx.Response) -> httpx.Response:
         if resp.status_code == 401:
-            raise CloudError("API key rejected (401). Check PRAXIMETRY_API_KEY — keys are "
-                             "unrecoverable once issued, so re-issue one from the dashboard.")
+            raise CloudError(
+                "API key rejected (401). Check PRAXIMETRY_API_KEY — keys are "
+                "unrecoverable once issued, so re-issue one from the dashboard."
+            )
         if resp.status_code == 403:
             raise CloudError(f"Forbidden (403): {resp.text}")
         if resp.status_code >= 400:
-            raise CloudError(f"{resp.request.method} {resp.request.url} -> {resp.status_code}: {resp.text}")
+            raise CloudError(
+                f"{resp.request.method} {resp.request.url} -> {resp.status_code}: {resp.text}"
+            )
         return resp
 
     def fetch_corpus(
@@ -76,10 +81,12 @@ class CloudClient:
             params["source"] = source
         if project:
             params["project"] = project
-        resp = self._check(self._client.get(self._url("/api/eval/corpus"),
-                                            params=params, headers=self._headers))
-        return Dataset(examples=[Example(**d) for d in resp.json()],
-                       path=f"{self.base_url}/api/eval/corpus")
+        resp = self._check(
+            self._client.get(self._url("/api/eval/corpus"), params=params, headers=self._headers)
+        )
+        return Dataset(
+            examples=[Example(**d) for d in resp.json()], path=f"{self.base_url}/api/eval/corpus"
+        )
 
     def push_captures(
         self, stage: str, captures: list[CapturedRequest], experiment_id: str | None = None
@@ -94,9 +101,13 @@ class CloudClient:
         body: dict = {"stage": stage, "captures": [c.model_dump() for c in captures]}
         if experiment_id:
             body["experiment_id"] = experiment_id
-        resp = self._check(self._client.post(
-            self._url("/api/eval/captures"), json=body, headers=self._headers,
-        ))
+        resp = self._check(
+            self._client.post(
+                self._url("/api/eval/captures"),
+                json=body,
+                headers=self._headers,
+            )
+        )
         return resp.json()
 
     def fetch_results(
@@ -118,9 +129,13 @@ class CloudClient:
             params["project"] = project
         if experiment_id:
             params["experiment_id"] = experiment_id
-        resp = self._check(self._client.get(
-            self._url("/api/eval/results"), params=params, headers=self._headers,
-        ))
+        resp = self._check(
+            self._client.get(
+                self._url("/api/eval/results"),
+                params=params,
+                headers=self._headers,
+            )
+        )
         return resp.json()
 
     def fetch_eval_config(self, project: str, stage: str | None = None) -> dict:
@@ -129,19 +144,31 @@ class CloudClient:
         params = {"project": project}
         if stage:
             params["stage"] = stage
-        resp = self._check(self._client.get(
-            self._url("/api/eval/config"), params=params, headers=self._headers,
-        ))
+        resp = self._check(
+            self._client.get(
+                self._url("/api/eval/config"),
+                params=params,
+                headers=self._headers,
+            )
+        )
         return resp.json()
+
+    def fetch_eval_default(self) -> dict | None:
+        resp = self._client.get(self._url("/api/eval/default"), headers=self._headers)
+        if resp.status_code == 404:
+            return None
+        return self._check(resp).json()
 
     def save_eval_config(self, project: str, fail_under: float, stage: str | None = None) -> dict:
         """POST /api/eval/config — saves a project default (stage omitted) or a
         per-stage override."""
-        resp = self._check(self._client.post(
-            self._url("/api/eval/config"),
-            json={"project": project, "stage": stage, "fail_under": fail_under},
-            headers=self._headers,
-        ))
+        resp = self._check(
+            self._client.post(
+                self._url("/api/eval/config"),
+                json={"project": project, "stage": stage, "fail_under": fail_under},
+                headers=self._headers,
+            )
+        )
         return resp.json()
 
     def push_optimize_capture(
@@ -156,18 +183,20 @@ class CloudClient:
         """POST a captured request shape to /api/optimize/captures to trigger a
         hosted optimization run. All trial logic (transforms, candidate selection,
         the trial loop itself) is server-side — this just submits what to optimize."""
-        resp = self._check(self._client.post(
-            self._url("/api/optimize/captures"),
-            json={
-                "stage": stage,
-                "captured_request": captured_request.model_dump(),
-                "candidate_models": list(candidate_models),
-                "transforms": list(transforms),
-                "quality_tolerance": quality_tolerance,
-                "max_trials": max_trials,
-            },
-            headers=self._headers,
-        ))
+        resp = self._check(
+            self._client.post(
+                self._url("/api/optimize/captures"),
+                json={
+                    "stage": stage,
+                    "captured_request": captured_request.model_dump(),
+                    "candidate_models": list(candidate_models),
+                    "transforms": list(transforms),
+                    "quality_tolerance": quality_tolerance,
+                    "max_trials": max_trials,
+                },
+                headers=self._headers,
+            )
+        )
         return resp.json()
 
     def fetch_winner(self, stage: str) -> dict | None:
@@ -182,11 +211,13 @@ class CloudClient:
         return self._check(resp).json()
 
     def push_trace(self, run: Run, calls: list[Call]) -> dict:
-        resp = self._check(self._client.post(
-            self._url("/api/traces"),
-            json={"run": run.model_dump(), "calls": [c.model_dump() for c in calls]},
-            headers=self._headers,
-        ))
+        resp = self._check(
+            self._client.post(
+                self._url("/api/traces"),
+                json={"run": run.model_dump(), "calls": [c.model_dump() for c in calls]},
+                headers=self._headers,
+            )
+        )
         return resp.json()
 
 

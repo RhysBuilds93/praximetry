@@ -27,11 +27,12 @@ PROJECT_EXAMPLES = [
 
 
 def _stub_app(score_by_example: dict, *, examples: list | None = None,
-              eval_config: dict | None = None) -> FastAPI:
+              eval_config: dict | None = None, eval_default: dict | None = None) -> FastAPI:
     app = FastAPI()
     corpus_examples = examples if examples is not None else EXAMPLES
     batches: dict[str, list[dict]] = {}
     saved_config: dict = dict(eval_config or {})
+    saved_default: dict | None = dict(eval_default) if eval_default else None
 
     def _score(caps: list[dict]) -> dict:
         scores = [score_by_example.get(c["example_id"], 1.0) for c in caps]
@@ -87,6 +88,18 @@ def _stub_app(score_by_example: dict, *, examples: list | None = None,
         fail_under = saved_config.get((project, stage),
                                        saved_config.get((project, None), 0.8))
         return {"project": project, "stage": stage, "fail_under": fail_under}
+
+    @app.get("/api/eval/default")
+    def get_default(authorization: str = Header(None)):
+        if authorization != f"Bearer {VALID_KEY}":
+            raise HTTPException(status_code=401, detail="bad key")
+        if saved_default is None:
+            raise HTTPException(status_code=404, detail="no default eval saved")
+        fail_under = saved_config.get(
+            (saved_default["project"], saved_default.get("stage")),
+            saved_config.get((saved_default["project"], None), 0.8),
+        )
+        return {**saved_default, "fail_under": fail_under}
 
     return app
 
@@ -177,13 +190,80 @@ def _register_project_stages(fake_llm):
         return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
 
 
-def test_eval_neither_stage_nor_project_is_unusable(monkeypatch):
+def test_eval_no_args_and_no_default_is_unusable(monkeypatch):
     monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
+    http = TestClient(_stub_app(score_by_example={}))
+    import praximetry.eval.hosted as hosted_mod
+    monkeypatch.setattr(hosted_mod, "client_from_env",
+                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
 
     result = runner.invoke(cli_app, ["eval"])
 
     assert result.exit_code == 2, result.output
-    assert "--stage" in result.output and "--project" in result.output
+    assert "no default saved" in result.output
+
+
+def test_eval_no_args_uses_saved_default(monkeypatch, fake_llm):
+    http = TestClient(_stub_app(
+        score_by_example={"e1": 1.0, "e2": 1.0},
+        eval_default={"project": "proj", "stage": "plan_action"},
+        eval_config={("proj", "plan_action"): 0.9},
+    ))
+    monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
+    import praximetry.eval.hosted as hosted_mod
+    monkeypatch.setattr(hosted_mod, "client_from_env",
+                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    @praximetry.stage("plan_action")
+    def plan_action(text):
+        return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
+
+    result = runner.invoke(cli_app, ["eval"])
+
+    assert result.exit_code == 0, result.output
+    assert "using default: project=proj stage=plan_action" in result.output
+    assert "PASS" in result.output
+
+
+def test_eval_config_file_supplies_project_and_threshold(monkeypatch, fake_llm, tmp_path):
+    http = TestClient(_stub_app(
+        score_by_example={"e1": 1.0, "e2": 0.5},
+        examples=PROJECT_EXAMPLES,
+    ))
+    monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
+    import praximetry.eval.hosted as hosted_mod
+    monkeypatch.setattr(hosted_mod, "client_from_env",
+                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+    _register_project_stages(fake_llm)
+
+    cfg = tmp_path / "eval.json"
+    cfg.write_text('{"project": "proj", "fail_under": 0.5}')
+
+    result = runner.invoke(cli_app, ["eval", "--config", str(cfg)])
+
+    assert result.exit_code == 0, result.output
+    assert "aggregate quality=0.75" in result.output
+    assert "PASS" in result.output
+
+
+def test_eval_config_file_overridden_by_cli_flag(monkeypatch, fake_llm, tmp_path):
+    http = TestClient(_stub_app(
+        score_by_example={"e1": 1.0, "e2": 0.5},
+        examples=PROJECT_EXAMPLES,
+    ))
+    monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
+    import praximetry.eval.hosted as hosted_mod
+    monkeypatch.setattr(hosted_mod, "client_from_env",
+                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+    _register_project_stages(fake_llm)
+
+    cfg = tmp_path / "eval.json"
+    cfg.write_text('{"project": "proj", "fail_under": 0.5}')
+
+    result = runner.invoke(cli_app, ["eval", "--config", str(cfg), "--fail-under", "0.9"])
+
+    assert result.exit_code == 1, result.output
+    assert "FAIL" in result.output
 
 
 def test_eval_project_alone_gates_on_aggregate_quality(monkeypatch, fake_llm):
