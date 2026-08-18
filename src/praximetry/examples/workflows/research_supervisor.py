@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import concurrent.futures
 import os
-import re
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
@@ -18,6 +17,7 @@ from typing import Annotated
 
 import praximetry as px
 from praximetry import runtime
+from praximetry.instrument.reasoning_patterns import split_embedded_reasoning
 
 from ._real import default_model, premium_model
 
@@ -43,12 +43,14 @@ def _clean_tool_calls(message: AIMessage) -> AIMessage:
     return message
 
 
-_REASONING_BLOCK = re.compile(r"^\s*<reasoning>.*?</reasoning>\s*", re.DOTALL)
+def _strip_reasoning(message: AIMessage, model: str) -> AIMessage:
+    """Split a leaked <reasoning>...</reasoning> block off message.content in place.
 
-
-def _strip_reasoning(text: str) -> str:
-    """Drop a leaked <reasoning>...</reasoning> block (PRA-91: capture instead of discarding)."""
-    return _REASONING_BLOCK.sub("", text, count=1)
+    Must run before the message is appended to conversation history -- otherwise
+    the raw reasoning block rides along into every downstream prompt built from it.
+    """
+    message.content, _ = split_embedded_reasoning(message.content, model)
+    return message
 
 
 def _record(result: str) -> str:
@@ -207,16 +209,16 @@ def _run_agent(name: str, request: str) -> str:
     tool_by_name = {t.name: t for t in AGENT_TOOLS[name]}
 
     for _ in range(MAX_AGENT_TURNS):
-        reply = _clean_tool_calls(llm.invoke(messages))
+        reply = _strip_reasoning(_clean_tool_calls(llm.invoke(messages)), default_model())
         messages.append(reply)
         if not reply.tool_calls:
-            return _strip_reasoning(reply.content)
+            return reply.content
         for call in reply.tool_calls:
             result = tool_by_name[call["name"]].invoke(call["args"])
             messages.append(ToolMessage(content=result, tool_call_id=call["id"]))
 
     last = messages[-1]
-    return _strip_reasoning(last.content) if isinstance(last, AIMessage) else "no finding reached"
+    return last.content if isinstance(last, AIMessage) else "no finding reached"
 
 
 def _agent_dispatch_stage(name: str):
@@ -258,7 +260,7 @@ def _synthesize(request: str, findings: str) -> str:
             HumanMessage(f"Request: {request}\nFindings: {findings}\nSynthesize a reply."),
         ]
     )
-    return _strip_reasoning(reply.content)
+    return _strip_reasoning(reply, premium_model()).content
 
 
 SUPERVISOR_SYSTEM = (
@@ -281,7 +283,7 @@ class ResearchState(TypedDict):
 @px.stage("supervisor")
 def _supervisor_llm_call(state: ResearchState) -> AIMessage:
     llm = _model(premium_model()).bind_tools(AGENT_DISPATCH_TOOLS + [finalize_report])
-    return _clean_tool_calls(llm.invoke(state["messages"]))
+    return _strip_reasoning(_clean_tool_calls(llm.invoke(state["messages"])), premium_model())
 
 
 def supervisor_node(state: ResearchState) -> dict:
@@ -350,7 +352,7 @@ def handle(request: str) -> str:
                 "_px_ctx": seed_ctx,
             }
         )
-    return final_state["result"] or _strip_reasoning(final_state["messages"][-1].content)
+    return final_state["result"] or final_state["messages"][-1].content
 
 
 REQUESTS = [
