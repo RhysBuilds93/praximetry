@@ -24,32 +24,24 @@ px.init(project="research-supervisor")
 MAX_AGENT_TURNS = 4
 
 
-_HARMONY_CHANNELS = (
-    "<|channel|>commentary",
-    "<|channel|>analysis",
-    "<|channel|>final",
-    "commentary",
-    "analysis",
-    "final",
-)
+def _clean_tool_calls(message: AIMessage, valid_names) -> AIMessage:
+    """Resolve tool-call names against the known-valid set for this dispatch context.
 
-
-def _clean_tool_calls(message: AIMessage) -> AIMessage:
-    """Strip leaked Harmony channel tags off tool-call names.
-
-    gpt-oss has leaked these both delimited ("name<|channel|>commentary")
-    and bare-concatenated ("namecommentary") -- the bare form has no
-    separator to split on, so match known channel-name suffixes directly.
+    gpt-oss has leaked Harmony channel/format tags glued onto tool-call
+    names in several different shapes ("name<|channel|>commentary",
+    "namecommentary", "namejson", ...) -- rather than chase each new
+    variant, treat any call name that starts with exactly one valid name
+    as that name with a leaked suffix.
     """
     if not message.tool_calls:
         return message
     for call in message.tool_calls:
         name = call["name"]
-        for suffix in _HARMONY_CHANNELS:
-            if name.endswith(suffix) and len(name) > len(suffix):
-                name = name[: -len(suffix)]
-                break
-        call["name"] = name
+        if name in valid_names:
+            continue
+        matches = [v for v in valid_names if name.startswith(v)]
+        if len(matches) == 1:
+            call["name"] = matches[0]
     return message
 
 
@@ -219,7 +211,9 @@ def _run_agent(name: str, request: str) -> str:
     tool_by_name = {t.name: t for t in AGENT_TOOLS[name]}
 
     for _ in range(MAX_AGENT_TURNS):
-        reply = _strip_reasoning(_clean_tool_calls(llm.invoke(messages)), default_model())
+        reply = _strip_reasoning(
+            _clean_tool_calls(llm.invoke(messages), tool_by_name.keys()), default_model()
+        )
         messages.append(reply)
         if not reply.tool_calls:
             return reply.content
@@ -290,10 +284,14 @@ class ResearchState(TypedDict):
     _px_ctx: dict | None  # runtime.capture_context() snapshot; only supervisor_node writes it
 
 
+_SUPERVISOR_TOOL_NAMES = {*AGENT_TOOLS, "finalize_report"}
+
+
 @px.stage("supervisor")
 def _supervisor_llm_call(state: ResearchState) -> AIMessage:
     llm = chat_model(premium_model()).bind_tools(AGENT_DISPATCH_TOOLS + [finalize_report])
-    return _strip_reasoning(_clean_tool_calls(llm.invoke(state["messages"])), premium_model())
+    reply = _clean_tool_calls(llm.invoke(state["messages"]), _SUPERVISOR_TOOL_NAMES)
+    return _strip_reasoning(reply, premium_model())
 
 
 def supervisor_node(state: ResearchState) -> dict:
