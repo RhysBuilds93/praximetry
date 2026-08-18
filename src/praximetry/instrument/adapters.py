@@ -23,6 +23,17 @@ def _g(obj: Any, *path: str, default: Any = None) -> Any:
     return obj
 
 
+def _parse_tool_args(raw: str | None) -> dict[str, Any]:
+    """Some reasoning models (e.g. gpt-oss) occasionally emit malformed JSON
+    in tool_call.function.arguments. This is instrumentation code -- a parse
+    failure here must not crash the caller's actual LLM call.
+    """
+    try:
+        return json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {"_unparsed": raw}
+
+
 class OutputAdapter(ABC):
     """Pure per-provider parsing: SDK request/response objects -> NormalizedOutput."""
 
@@ -61,7 +72,7 @@ class OpenAIAdapter(OutputAdapter):
         text = _g(message, "content", default="") or ""
         tool_calls = [
             ToolCall(
-                id=tc.id, name=tc.function.name, arguments=json.loads(tc.function.arguments or "{}")
+                id=tc.id, name=tc.function.name, arguments=_parse_tool_args(tc.function.arguments)
             )
             for tc in (_g(message, "tool_calls", default=[]) or [])
         ]
