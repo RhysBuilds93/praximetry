@@ -31,6 +31,9 @@ PRICING: dict[str, tuple[float, float]] = {
     "gemini-2.0-flash": (0.10, 0.40),
     "gemini-1.5-pro": (1.25, 5.0),
     "gemini-1.5-flash": (0.075, 0.30),
+    # OpenAI gpt-oss, served via Bedrock (used by the example workflows' AI_ENDPOINT)
+    "openai.gpt-oss-120b-1:0": (0.15, 0.60),
+    "openai.gpt-oss-20b-1:0": (0.07, 0.30),
 }
 
 # Cheaper-alternative ladder used by the optimizer, per provider tier.
@@ -45,6 +48,7 @@ DOWNGRADE_LADDER: dict[str, list[str]] = {
     "gemini-2.5-pro": ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
     "gemini-2.5-flash": ["gemini-2.5-flash-lite"],
     "gemini-1.5-pro": ["gemini-1.5-flash"],
+    "openai.gpt-oss-120b-1:0": ["openai.gpt-oss-20b-1:0"],
 }
 
 
