@@ -5,11 +5,9 @@ python -m praximetry.examples.workflows.research_supervisor
 from __future__ import annotations
 
 import concurrent.futures
-import os
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
@@ -19,27 +17,39 @@ import praximetry as px
 from praximetry import runtime
 from praximetry.instrument.reasoning_patterns import split_embedded_reasoning
 
-from ._real import default_model, premium_model
+from ._real import chat_model, default_model, premium_model
 
 px.init(project="research-supervisor")
 
 MAX_AGENT_TURNS = 4
 
 
-def _model(name: str) -> ChatOpenAI:
-    return ChatOpenAI(
-        model=name,
-        base_url=os.environ.get("AI_ENDPOINT", "https://api.openai.com/v1"),
-        api_key=os.environ["AI_API_KEY"],
-    )
+_HARMONY_CHANNELS = (
+    "<|channel|>commentary",
+    "<|channel|>analysis",
+    "<|channel|>final",
+    "commentary",
+    "analysis",
+    "final",
+)
 
 
 def _clean_tool_calls(message: AIMessage) -> AIMessage:
-    """Strip leaked Harmony channel tags (e.g. "name<|channel|>commentary") off tool-call names."""
+    """Strip leaked Harmony channel tags off tool-call names.
+
+    gpt-oss has leaked these both delimited ("name<|channel|>commentary")
+    and bare-concatenated ("namecommentary") -- the bare form has no
+    separator to split on, so match known channel-name suffixes directly.
+    """
     if not message.tool_calls:
         return message
     for call in message.tool_calls:
-        call["name"] = call["name"].split("<|", 1)[0]
+        name = call["name"]
+        for suffix in _HARMONY_CHANNELS:
+            if name.endswith(suffix) and len(name) > len(suffix):
+                name = name[: -len(suffix)]
+                break
+        call["name"] = name
     return message
 
 
@@ -201,7 +211,7 @@ AGENT_SYSTEM = (
 
 
 def _run_agent(name: str, request: str) -> str:
-    llm = _model(default_model()).bind_tools(AGENT_TOOLS[name])
+    llm = chat_model(default_model()).bind_tools(AGENT_TOOLS[name])
     messages: list = [
         SystemMessage(AGENT_SYSTEM.format(name=name)),
         HumanMessage(request),
@@ -255,7 +265,7 @@ def finalize_report(request: str, findings: str) -> str:
 
 @px.stage("synthesize")
 def _synthesize(request: str, findings: str) -> str:
-    reply = _model(premium_model()).invoke(
+    reply = chat_model(premium_model()).invoke(
         [
             HumanMessage(f"Request: {request}\nFindings: {findings}\nSynthesize a reply."),
         ]
@@ -282,7 +292,7 @@ class ResearchState(TypedDict):
 
 @px.stage("supervisor")
 def _supervisor_llm_call(state: ResearchState) -> AIMessage:
-    llm = _model(premium_model()).bind_tools(AGENT_DISPATCH_TOOLS + [finalize_report])
+    llm = chat_model(premium_model()).bind_tools(AGENT_DISPATCH_TOOLS + [finalize_report])
     return _strip_reasoning(_clean_tool_calls(llm.invoke(state["messages"])), premium_model())
 
 

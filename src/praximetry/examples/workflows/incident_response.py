@@ -1,40 +1,18 @@
-"""Workflow 5: incident response -- the graph-shaped workflow.
+"""Try:
+python -m praximetry.examples.workflows.incident_response
 
-The other workflows here are pipelines: a fixed sequence of stages. This one
-exists because the Observe network graph has to render three structures that a
-pipeline never produces, and they need real traffic to verify against:
-
-  branching   `correlate` hands off to one of three playbook stages depending
-              on what `triage` decided, so the same node has genuinely
-              different successors across runs.
-
-  loop/retry  draft_postmortem -> critique_postmortem -> (rejected) ->
-              draft_postmortem, bounded by MAX_REVISIONS. A real cycle in the
-              stage graph, which the layout has to render as a back-arc rather
-              than pretend is a forward edge.
-
-  fan-out     `gather_signals` is an async stage awaiting asyncio.gather over
-              2-3 async sub-stages. asyncio copies the context into each task,
-              so each sub-call inherits the gather_signals call as its parent:
-              several calls sharing one parent_call_id is what concurrency
-              looks like in the recorded data.
-
-This mirrors the simpler `examples/incident_agent.py` fixture at the repo
-root, but lives here (inside the installed package, under
-`praximetry.examples.workflows`) because it's also used as a fixture by
-praximetry-cloud's own eval/optimize test suite, which imports it from the
-installed package rather than vendoring a copy.
-
-Try:
-    python -m praximetry.examples.workflows.incident_response
-    praximetry eval --stage triage -m praximetry.examples.workflows.incident_response
+Graph-shaped workflow: `correlate` branches to one of three playbooks,
+`draft_postmortem`/`critique_postmortem` form a bounded retry cycle, and
+`gather_signals` fans out over concurrent async sub-stages.
 """
 
 import asyncio
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
 import praximetry as px
 
-from ._real import default_model, real_chat
+from ._real import chat_model, clean_content, default_model
 
 px.init(project="incident-response")
 
@@ -43,6 +21,13 @@ SYSTEM = "You are an on-call incident response agent. Be precise and cite signal
 CATEGORIES = ["database", "network", "security"]
 
 MAX_REVISIONS = 3
+
+
+def _ask(prompt: str, *, system: bool = False) -> str:
+    messages = [SystemMessage(SYSTEM)] if system else []
+    messages.append(HumanMessage(prompt))
+    reply = chat_model(default_model()).invoke(messages)
+    return clean_content(reply, default_model())
 
 
 def _parse_category(raw: str) -> str:
@@ -55,16 +40,10 @@ def _parse_category(raw: str) -> str:
 
 @px.stage("triage")
 def triage(incident: str) -> str:
-    raw = real_chat(
-        default_model(),
-        [
-            {"role": "system", "content": SYSTEM},
-            {
-                "role": "user",
-                "content": f"Categories: {CATEGORIES}\n\nIncident: {incident}\n\n"
-                "Reply with exactly one category word, nothing else.",
-            },
-        ],
+    raw = _ask(
+        f"Categories: {CATEGORIES}\n\nIncident: {incident}\n\n"
+        "Reply with exactly one category word, nothing else.",
+        system=True,
     )
     return _parse_category(raw)
 
@@ -75,48 +54,30 @@ def triage(incident: str) -> str:
 @px.stage("fetch_logs")
 async def fetch_logs(incident: str) -> str:
     await asyncio.sleep(0)  # yield, so the siblings genuinely interleave
-    return real_chat(
-        default_model(),
-        [
-            {
-                "role": "user",
-                "content": f"You are a log-search tool. Report one concise, plausible line of "
-                f"error-log evidence for this incident, starting with 'logs:'. "
-                f"Incident: {incident}",
-            }
-        ],
+    return _ask(
+        f"You are a log-search tool. Report one concise, plausible line of "
+        f"error-log evidence for this incident, starting with 'logs:'. "
+        f"Incident: {incident}"
     )
 
 
 @px.stage("fetch_metrics")
 async def fetch_metrics(incident: str) -> str:
     await asyncio.sleep(0)
-    return real_chat(
-        default_model(),
-        [
-            {
-                "role": "user",
-                "content": f"You are a metrics tool. Report one concise, plausible line of "
-                f"metrics evidence for this incident, starting with 'metrics:'. "
-                f"Incident: {incident}",
-            }
-        ],
+    return _ask(
+        f"You are a metrics tool. Report one concise, plausible line of "
+        f"metrics evidence for this incident, starting with 'metrics:'. "
+        f"Incident: {incident}"
     )
 
 
 @px.stage("fetch_alerts")
 async def fetch_alerts(incident: str) -> str:
     await asyncio.sleep(0)
-    return real_chat(
-        default_model(),
-        [
-            {
-                "role": "user",
-                "content": f"You are a paging tool. Report one concise, plausible line of "
-                f"alert evidence for this incident, starting with 'alerts:'. "
-                f"Incident: {incident}",
-            }
-        ],
+    return _ask(
+        f"You are a paging tool. Report one concise, plausible line of "
+        f"alert evidence for this incident, starting with 'alerts:'. "
+        f"Incident: {incident}"
     )
 
 
@@ -131,18 +92,12 @@ async def gather_signals(incident: str, category: str = "") -> list[str]:
     spawned sub-stage inherits as its parent -- that is the sibling group.
     """
     category = category or _parse_category(triage(incident))
-    raw = real_chat(
-        default_model(),
-        [
-            {
-                "role": "user",
-                "content": f"Which signal sources are needed for a {category} incident? "
-                f"Options: {list(FETCHERS)}. Always include 'logs' and 'metrics' as the "
-                "baseline signals for any incident. For a security incident, also include "
-                "'alerts'. Reply with a comma-separated subset, nothing else. "
-                f"Incident: {incident}",
-            }
-        ],
+    raw = _ask(
+        f"Which signal sources are needed for a {category} incident? "
+        f"Options: {list(FETCHERS)}. Always include 'logs' and 'metrics' as the "
+        "baseline signals for any incident. For a security incident, also include "
+        "'alerts'. Reply with a comma-separated subset, nothing else. "
+        f"Incident: {incident}"
     )
     sources = [s.strip().lower() for s in raw.split(",") if s.strip().lower() in FETCHERS]
     if not sources:
@@ -153,19 +108,13 @@ async def gather_signals(incident: str, category: str = "") -> list[str]:
 @px.stage("correlate")
 def correlate(incident: str, signals: list[str] | None = None) -> str:
     """Join stage: consumes the combined result of the concurrent branches."""
-    return real_chat(
-        default_model(),
-        [
-            {"role": "system", "content": SYSTEM},
-            {
-                "role": "user",
-                "content": f"Incident: {incident}\nSignals:\n"
-                + "\n".join(signals or [])
-                + "\n\nCorrelate the signals into a finding. If they clearly point to "
-                "one cause, reply starting with 'clear cause: <cause>'. If they "
-                "don't converge, reply exactly 'cause: inconclusive'.",
-            },
-        ],
+    return _ask(
+        f"Incident: {incident}\nSignals:\n"
+        + "\n".join(signals or [])
+        + "\n\nCorrelate the signals into a finding. If they clearly point to "
+        "one cause, reply starting with 'clear cause: <cause>'. If they "
+        "don't converge, reply exactly 'cause: inconclusive'.",
+        system=True,
     )
 
 
@@ -175,16 +124,10 @@ def correlate(incident: str, signals: list[str] | None = None) -> str:
 def _playbook(stage_name: str, guidance: str):
     @px.stage(stage_name)
     def run_playbook(incident: str, correlation: str = "") -> str:
-        return real_chat(
-            default_model(),
-            [
-                {
-                    "role": "user",
-                    "content": f"Incident: {incident}\nFinding: {correlation}\n\n"
-                    f"You are running the {stage_name} runbook ({guidance}). "
-                    "State the remediation steps taken, concisely, past tense.",
-                }
-            ],
+        return _ask(
+            f"Incident: {incident}\nFinding: {correlation}\n\n"
+            f"You are running the {stage_name} runbook ({guidance}). "
+            "State the remediation steps taken, concisely, past tense."
         )
 
     return run_playbook
@@ -213,36 +156,24 @@ def draft_postmortem(
         if has_cause
         else "The finding is inconclusive: do not state a root cause yet."
     )
-    return real_chat(
-        default_model(),
-        [
-            {"role": "system", "content": SYSTEM},
-            {
-                "role": "user",
-                "content": f"Write the postmortem.\nFinding: {correlation}\n"
-                f"Remediation: {remediation}\nReviewer says: {feedback or 'n/a'}\n\n"
-                f"{cause_instruction}",
-            },
-        ],
+    return _ask(
+        f"Write the postmortem.\nFinding: {correlation}\n"
+        f"Remediation: {remediation}\nReviewer says: {feedback or 'n/a'}\n\n"
+        f"{cause_instruction}",
+        system=True,
     )
 
 
 @px.stage("critique_postmortem")
 def critique_postmortem(draft: str) -> str:
-    return real_chat(
-        default_model(),
-        [
-            {
-                "role": "user",
-                "content": f"Review this postmortem:\n{draft}\n\n"
-                "A root cause is clear enough to approve once it names a specific "
-                "technical or process failure (not a vague placeholder like "
-                "'identified and confirmed'). It does not need an exhaustive "
-                "5-whys chain all the way to a first cause -- one concrete, "
-                "specific cause is sufficient. If it meets that bar, reply "
-                "exactly 'approve'. Otherwise reply 'reject: <short reason>'.",
-            }
-        ],
+    return _ask(
+        f"Review this postmortem:\n{draft}\n\n"
+        "A root cause is clear enough to approve once it names a specific "
+        "technical or process failure (not a vague placeholder like "
+        "'identified and confirmed'). It does not need an exhaustive "
+        "5-whys chain all the way to a first cause -- one concrete, "
+        "specific cause is sufficient. If it meets that bar, reply "
+        "exactly 'approve'. Otherwise reply 'reject: <short reason>'."
     )
 
 
@@ -252,16 +183,10 @@ def publish_postmortem(draft: str) -> str:
     # remediation status is the critique stage's job to gate on, not this
     # one's. State that plainly so the model doesn't second-guess or
     # editorialize about pending remediation instead of confirming.
-    return real_chat(
-        default_model(),
-        [
-            {
-                "role": "user",
-                "content": f"This postmortem has already been approved for publishing. Confirm "
-                "publication with a single line starting exactly with 'Published:' "
-                f"followed by the incident name. No caveats, no questions.\n\n{draft}",
-            }
-        ],
+    return _ask(
+        f"This postmortem has already been approved for publishing. Confirm "
+        "publication with a single line starting exactly with 'Published:' "
+        f"followed by the incident name. No caveats, no questions.\n\n{draft}"
     )
 
 
