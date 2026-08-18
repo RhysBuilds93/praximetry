@@ -29,6 +29,16 @@ _patched: set[str] = set()
 _capture_hook: Callable[[dict], Any] | None = None
 
 
+def _unwrap_for_parsing(resp: Any) -> Any:
+    """LangChain (and any caller using `with_raw_response`) gets back a
+    LegacyAPIResponse wrapper with no `.usage`/`.choices` -- only its parsed
+    `.parse()` result has those. `.parse()` is cached, so calling it here
+    doesn't disturb the caller's own later `.parse()` call on the same resp.
+    """
+    parse = getattr(resp, "parse", None)
+    return parse() if callable(parse) else resp
+
+
 @contextmanager
 def capturing(hook: Callable[[dict], Any]):
     """Route the next patched SDK call(s) to `hook` instead of the real API.
@@ -139,7 +149,7 @@ def _instrument(
             except Exception as e:  # noqa: BLE001
                 _record(provider, model, messages, NormalizedOutput(), t0, str(e))
                 raise
-            out = adapter.parse_response(resp, model)
+            out = adapter.parse_response(_unwrap_for_parsing(resp), model)
             _record(provider, model, messages, out, t0, None)
             return resp
 
@@ -169,7 +179,7 @@ def _instrument(
         except Exception as e:  # noqa: BLE001
             _record(provider, model, messages, NormalizedOutput(), t0, str(e))
             raise
-        out = adapter.parse_response(resp, model)
+        out = adapter.parse_response(_unwrap_for_parsing(resp), model)
         _record(provider, model, messages, out, t0, None)
         return resp
 
