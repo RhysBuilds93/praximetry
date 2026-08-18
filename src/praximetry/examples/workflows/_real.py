@@ -29,11 +29,9 @@ from praximetry.instrument.reasoning_patterns import split_embedded_reasoning
 
 _DEFAULT_MODEL_FALLBACK = "gpt-4o-mini"
 
-# A handful of workflows (support_triage's `classify`, tau_retail's
-# `plan_action`) deliberately call an oversized/expensive model for a cheap
-# task, on purpose, so the traffic detector has a real oversized_model
-# anti-pattern in the recorded traffic to catch. Point this at a pricier
-# model your AI_ENDPOINT serves.
+# Used by workflows' supervisor/synthesis stages (e.g. supervisor_delegation,
+# research_supervisor) that deliberately reach for a pricier model than the
+# per-agent calls. Point this at a pricier model your AI_ENDPOINT serves.
 _PREMIUM_MODEL_FALLBACK = "gpt-4o"
 
 
