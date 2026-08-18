@@ -1,13 +1,8 @@
-"""Shared LLM call for the example workflows -- ordinary customer code, not a
-special harness.
-
-Every workflow calls `px.init(auto_instrument_sdks=True)` (the
-default), which monkey-patches `openai.resources.chat.completions.Completions
-.create` for the whole process. So the `client.chat.completions.create(...)`
-call below is recorded, priced, and timed the exact same way it would be in
-your own agent code -- there's no separate recording path here, and any
-active experiment override (model swap, prompt transform) is applied to it
-the same way it would be to yours.
+"""Shared LLM setup for the example workflows -- ordinary customer code, not a
+special harness. Every workflow calls `px.init(auto_instrument_sdks=True)`
+(the default), which patches the openai SDK client that `ChatOpenAI` uses
+internally, so calls made through `chat_model()` below are recorded, priced,
+and timed the same way they would be in your own agent code.
 
 Setup: point these two env vars at your own provider before running a
 workflow.
@@ -27,15 +22,11 @@ from __future__ import annotations
 
 import os
 
-from openai import OpenAI
+from langchain_core.messages import AIMessage
+from langchain_openai import ChatOpenAI
 
 from praximetry.instrument.reasoning_patterns import split_embedded_reasoning
 
-# Change the fallback below to match whatever your AI_ENDPOINT serves, e.g.
-# "gpt-4o-mini" for OpenAI, "claude-haiku-4-5-20251001" for an
-# Anthropic-compatible endpoint, or your own model name for a self-hosted
-# server. Read live (not cached at import) so PRAXIMETRY_EXAMPLE_MODEL can be
-# set per-run without reimporting.
 _DEFAULT_MODEL_FALLBACK = "gpt-4o-mini"
 
 # A handful of workflows (support_triage's `classify`, tau_retail's
@@ -44,18 +35,6 @@ _DEFAULT_MODEL_FALLBACK = "gpt-4o-mini"
 # anti-pattern in the recorded traffic to catch. Point this at a pricier
 # model your AI_ENDPOINT serves.
 _PREMIUM_MODEL_FALLBACK = "gpt-4o"
-
-_client: OpenAI | None = None
-
-
-def _get_client() -> OpenAI:
-    global _client
-    if _client is None:
-        _client = OpenAI(
-            base_url=os.environ.get("AI_ENDPOINT", "https://api.openai.com/v1"),
-            api_key=os.environ["AI_API_KEY"],
-        )
-    return _client
 
 
 def default_model() -> str:
@@ -66,9 +45,16 @@ def premium_model() -> str:
     return os.environ.get("PRAXIMETRY_EXAMPLE_PREMIUM_MODEL", _PREMIUM_MODEL_FALLBACK)
 
 
-def real_chat(model: str, messages: list[dict]) -> str:
-    """Call your configured provider. Same call a stage in your own agent makes."""
-    completion = _get_client().chat.completions.create(model=model, messages=messages)
-    content = completion.choices[0].message.content
-    output_text, _reasoning_text = split_embedded_reasoning(content, model)
-    return output_text
+def chat_model(name: str) -> ChatOpenAI:
+    return ChatOpenAI(
+        model=name,
+        base_url=os.environ.get("AI_ENDPOINT", "https://api.openai.com/v1"),
+        api_key=os.environ["AI_API_KEY"],
+    )
+
+
+def clean_content(message: AIMessage, model: str) -> str:
+    """Strip a leaked <reasoning>...</reasoning> block some providers (e.g.
+    gpt-oss models via Bedrock's OpenAI-compatible endpoint) prepend to content."""
+    text, _reasoning = split_embedded_reasoning(message.content, model)
+    return text
