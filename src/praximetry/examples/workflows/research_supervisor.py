@@ -218,7 +218,11 @@ def _run_agent(name: str, request: str) -> str:
         if not reply.tool_calls:
             return reply.content
         for call in reply.tool_calls:
-            result = tool_by_name[call["name"]].invoke(call["args"])
+            tool = tool_by_name.get(call["name"])
+            if tool is None:
+                result = f"unknown tool {call['name']!r}, available: {sorted(tool_by_name)}"
+            else:
+                result = tool.invoke(call["args"])
             messages.append(ToolMessage(content=result, tool_call_id=call["id"]))
 
     last = messages[-1]
