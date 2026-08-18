@@ -2,10 +2,12 @@
 python -m praximetry.examples.workflows.human_approval
 """
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
 import praximetry as px
 from praximetry import runtime
 
-from ._real import default_model, real_chat
+from ._real import chat_model, clean_content, default_model
 
 px.init(project="human-approval")
 
@@ -16,10 +18,8 @@ DESTRUCTIVE_KEYWORDS = ("delete", "purge", "drop", "remove")
 
 @px.stage("draft_action")
 def draft_action(request: str) -> str:
-    return real_chat(
-        default_model(),
-        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": request}],
-    )
+    reply = chat_model(default_model()).invoke([SystemMessage(SYSTEM), HumanMessage(request)])
+    return clean_content(reply, default_model())
 
 
 @px.stage("await_approval")
@@ -34,16 +34,14 @@ def await_approval(action: str) -> str:
 
 @px.stage("execute")
 def execute(action: str) -> str:
-    return real_chat(
-        default_model(), [{"role": "user", "content": f"Confirm execution of: {action}"}]
-    )
+    reply = chat_model(default_model()).invoke([HumanMessage(f"Confirm execution of: {action}")])
+    return clean_content(reply, default_model())
 
 
 @px.stage("discard")
 def discard(action: str) -> str:
-    return real_chat(
-        default_model(), [{"role": "user", "content": f"Log the rejection of: {action}"}]
-    )
+    reply = chat_model(default_model()).invoke([HumanMessage(f"Log the rejection of: {action}")])
+    return clean_content(reply, default_model())
 
 
 def handle(request: str) -> str:

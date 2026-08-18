@@ -3,47 +3,43 @@ python -m praximetry.examples.workflows.supervisor_delegation
 """
 
 import asyncio
+from typing import Literal
+
+from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel, Field
 
 import praximetry as px
 
-from ._real import default_model, premium_model, real_chat
+from ._real import chat_model, clean_content, default_model, premium_model
 
 px.init(project="supervisor-delegation")
 
-SYSTEM = "You are a triage supervisor. List every relevant domain, comma-separated: billing, technical, general."
-
-DOMAINS = ("billing", "technical", "general")
+SYSTEM = "You are a triage supervisor. Decide which domains this request touches."
 
 
-def _parse_domains(raw: str) -> list[str]:
-    low = raw.lower()
-    found = [d for d in DOMAINS if d in low]
-    return found or ["general"]
+class DomainClassification(BaseModel):
+    domains: list[Literal["billing", "technical", "general"]] = Field(
+        description="Every relevant domain, at least one."
+    )
 
 
 @px.stage("supervisor")
 async def supervisor(request: str) -> list[str]:
     await asyncio.sleep(0)
-    raw = real_chat(
-        premium_model(),
-        [{"role": "system", "content": SYSTEM}, {"role": "user", "content": request}],
-    )
-    return _parse_domains(raw)
+    llm = chat_model(premium_model()).with_structured_output(DomainClassification)
+    result = await llm.ainvoke([SystemMessage(SYSTEM), HumanMessage(request)])
+    domains = list(dict.fromkeys(result.domains))
+    return domains or ["general"]
 
 
 def _agent(stage_name: str):
     @px.stage(stage_name)
     async def agent(request: str) -> str:
         await asyncio.sleep(0)
-        return real_chat(
-            default_model(),
-            [
-                {
-                    "role": "user",
-                    "content": f"As the {stage_name}, give a one-line finding for: {request}",
-                }
-            ],
+        reply = await chat_model(default_model()).ainvoke(
+            [HumanMessage(f"As the {stage_name}, give a one-line finding for: {request}")]
         )
+        return clean_content(reply, default_model())
 
     return agent
 
@@ -59,15 +55,10 @@ AGENTS = {"billing": billing_agent, "technical": technical_agent, "general": gen
 def synthesize(request: str, findings: list[str]) -> str:
     # Parents to `supervisor`, not any agent -- see ARCHITECTURES.md's gather/join note.
     joined = " ".join(findings)
-    return real_chat(
-        premium_model(),
-        [
-            {
-                "role": "user",
-                "content": f"Request: {request}\nFindings: {joined}\nSynthesize a reply.",
-            }
-        ],
+    reply = chat_model(premium_model()).invoke(
+        [HumanMessage(f"Request: {request}\nFindings: {joined}\nSynthesize a reply.")]
     )
+    return clean_content(reply, premium_model())
 
 
 async def handle(request: str) -> str:
