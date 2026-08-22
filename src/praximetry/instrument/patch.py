@@ -113,6 +113,30 @@ def _make_stream_done(provider: str, model: str, messages: list, adapter, t0: fl
     return on_done
 
 
+def _prepare_call(kwargs: dict[str, Any], messages_key: str, provider: str, adapter):
+    """Shared pre-call setup for the sync/async create() wrappers: apply
+    overrides and resolve model/messages/capture-hook-payload."""
+    kwargs = _apply_overrides(kwargs, messages_key)
+    model, messages = kwargs.get("model", "unknown"), adapter.get_messages(kwargs)
+    capture_payload = (
+        {
+            "provider": provider,
+            "model": model,
+            "messages": messages,
+            "tools": kwargs.get("tools", []),
+        }
+        if _capture_hook is not None
+        else None
+    )
+    return kwargs, model, messages, capture_payload
+
+
+def _finish_call(provider: str, model: str, messages: list, adapter, resp: Any, t0: float) -> Any:
+    out = adapter.parse_response(_unwrap_for_parsing(resp), model)
+    _record(provider, model, messages, out, t0, None)
+    return resp
+
+
 def _instrument(
     original: Callable,
     provider: str,
@@ -125,17 +149,11 @@ def _instrument(
     if is_async:
 
         async def acreate(self: Any, *args: Any, **kwargs: Any) -> Any:
-            kwargs = _apply_overrides(kwargs, messages_key)
-            model, messages = kwargs.get("model", "unknown"), adapter.get_messages(kwargs)
-            if _capture_hook is not None:
-                return _capture_hook(
-                    {
-                        "provider": provider,
-                        "model": model,
-                        "messages": messages,
-                        "tools": kwargs.get("tools", []),
-                    }
-                )
+            kwargs, model, messages, capture_payload = _prepare_call(
+                kwargs, messages_key, provider, adapter
+            )
+            if capture_payload is not None:
+                return _capture_hook(capture_payload)
             t0 = time.perf_counter()
             if force_stream or kwargs.get("stream"):
                 resp = await original(self, *args, **kwargs)
@@ -149,25 +167,17 @@ def _instrument(
             except Exception as e:  # noqa: BLE001
                 _record(provider, model, messages, NormalizedOutput(), t0, str(e))
                 raise
-            out = adapter.parse_response(_unwrap_for_parsing(resp), model)
-            _record(provider, model, messages, out, t0, None)
-            return resp
+            return _finish_call(provider, model, messages, adapter, resp, t0)
 
         acreate._praximetry_patched = True  # type: ignore[attr-defined]
         return acreate
 
     def create(self: Any, *args: Any, **kwargs: Any) -> Any:
-        kwargs = _apply_overrides(kwargs, messages_key)
-        model, messages = kwargs.get("model", "unknown"), adapter.get_messages(kwargs)
-        if _capture_hook is not None:
-            return _capture_hook(
-                {
-                    "provider": provider,
-                    "model": model,
-                    "messages": messages,
-                    "tools": kwargs.get("tools", []),
-                }
-            )
+        kwargs, model, messages, capture_payload = _prepare_call(
+            kwargs, messages_key, provider, adapter
+        )
+        if capture_payload is not None:
+            return _capture_hook(capture_payload)
         t0 = time.perf_counter()
         if force_stream or kwargs.get("stream"):
             resp = original(self, *args, **kwargs)
@@ -179,9 +189,7 @@ def _instrument(
         except Exception as e:  # noqa: BLE001
             _record(provider, model, messages, NormalizedOutput(), t0, str(e))
             raise
-        out = adapter.parse_response(_unwrap_for_parsing(resp), model)
-        _record(provider, model, messages, out, t0, None)
-        return resp
+        return _finish_call(provider, model, messages, adapter, resp, t0)
 
     create._praximetry_patched = True  # type: ignore[attr-defined]
     return create
