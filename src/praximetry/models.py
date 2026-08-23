@@ -6,7 +6,7 @@ import time
 import uuid
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def _id() -> str:
@@ -15,6 +15,11 @@ def _id() -> str:
 
 class Call(BaseModel):
     """One LLM API call."""
+
+    # record_call(**kwargs) builds this from caller-supplied keyword args; a
+    # misnamed field (e.g. response_text instead of output_text) must raise,
+    # not silently vanish into pydantic's default extra="ignore".
+    model_config = ConfigDict(extra="forbid")
 
     id: str = Field(default_factory=_id)
     run_id: str
