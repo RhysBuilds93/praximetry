@@ -11,6 +11,7 @@ import json
 import os
 
 import httpx
+import httpx2
 import pytest
 
 from praximetry.instrument.patch import auto_instrument
@@ -118,8 +119,8 @@ def _anthropic_json(text="claude says hi", tin=15, tout=5):
 def test_anthropic_real_client_buffered():
     from anthropic import Anthropic
 
-    transport = httpx.MockTransport(lambda req: httpx.Response(200, json=_anthropic_json()))
-    client = Anthropic(api_key="test", http_client=httpx.Client(transport=transport))
+    transport = httpx2.MockTransport(lambda req: httpx2.Response(200, json=_anthropic_json()))
+    client = Anthropic(api_key="test", http_client=httpx2.Client(transport=transport))
     resp = client.messages.create(
         model="claude-sonnet-5",
         max_tokens=64,
@@ -140,10 +141,10 @@ def test_anthropic_real_client_async_buffered():
 
     from anthropic import AsyncAnthropic
 
-    transport = httpx.MockTransport(
-        lambda req: httpx.Response(200, json=_anthropic_json("async hi"))
+    transport = httpx2.MockTransport(
+        lambda req: httpx2.Response(200, json=_anthropic_json("async hi"))
     )
-    client = AsyncAnthropic(api_key="test", http_client=httpx.AsyncClient(transport=transport))
+    client = AsyncAnthropic(api_key="test", http_client=httpx2.AsyncClient(transport=transport))
 
     async def go():
         return await client.messages.create(
