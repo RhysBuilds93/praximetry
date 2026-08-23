@@ -28,7 +28,7 @@ def await_approval(action: str) -> str:
     actions (delete/purge/drop/remove) are rejected; everything else is approved."""
     low = action.lower()
     result = "rejected" if any(k in low for k in DESTRUCTIVE_KEYWORDS) else "approved"
-    runtime.record_call(response_text=result, cost_usd=0)
+    runtime.record_call(output_text=result, cost_usd=0)
     return result
 
 

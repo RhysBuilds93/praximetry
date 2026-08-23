@@ -56,7 +56,7 @@ def _strip_reasoning(message: AIMessage, model: str) -> AIMessage:
 
 
 def _record(result: str) -> str:
-    runtime.record_call(response_text=result, cost_usd=0)
+    runtime.record_call(output_text=result, cost_usd=0)
     return result
 
 
