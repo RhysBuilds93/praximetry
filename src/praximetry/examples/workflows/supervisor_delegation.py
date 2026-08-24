@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 import praximetry as px
+from praximetry import runtime
 
 from ._real import chat_model, clean_content, default_model, premium_model
 
@@ -74,8 +75,19 @@ async def handle(request: str) -> str:
     # .ainvoke() happens, means every Task inherits the same already-set run id.
     with px.run_context():
         domains = await supervisor(request)
-        findings = list(await asyncio.gather(*(AGENTS[d](request) for d in domains)))
-        return synthesize(request, findings)
+        # supervisor()'s own .ainvoke() call was recorded inside its own Task, so
+        # this task never saw that write -- capture_context() reads it back off the
+        # shared Run object instead. Restoring it here, before the gather, seeds
+        # every fanned-out agent Task's context at creation time, which *does*
+        # propagate forward correctly (asyncio.gather copies context per Task).
+        ctx = runtime.capture_context()
+        with runtime.restore_context(ctx):
+            findings = list(await asyncio.gather(*(AGENTS[d](request) for d in domains)))
+        # The gather above raced the shared Run's last-call-id between agents;
+        # synthesize parents to supervisor, not any agent -- see ARCHITECTURES.md's
+        # gather/join note -- so restore the pre-gather context explicitly.
+        with runtime.restore_context(ctx):
+            return synthesize(request, findings)
 
 
 REQUESTS = [
