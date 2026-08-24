@@ -55,8 +55,10 @@ def _strip_reasoning(message: AIMessage, model: str) -> AIMessage:
     return message
 
 
-def _record(result: str) -> str:
-    runtime.record_call(output_text=result, cost_usd=0)
+def _record(input_text: str, result: str) -> str:
+    runtime.record_call(
+        messages=[{"role": "user", "content": input_text}], output_text=result, cost_usd=0
+    )
     return result
 
 
@@ -65,8 +67,9 @@ def _record(result: str) -> str:
 def web_search(query: str) -> str:
     """Search the public web for pages relevant to the query."""
     return _record(
+        query,
         f"4 results for '{query}': 2 industry blog posts, a TechCrunch "
-        f"piece, and a competitor's own announcement, all from the last 90 days."
+        f"piece, and a competitor's own announcement, all from the last 90 days.",
     )
 
 
@@ -74,7 +77,7 @@ def web_search(query: str) -> str:
 @px.stage("fetch_url")
 def fetch_url(url: str) -> str:
     """Fetch the contents of a specific URL found by web_search."""
-    return _record(f"Fetched {url}: ~1,100 words, last updated 2026-06, no paywall.")
+    return _record(url, f"Fetched {url}: ~1,100 words, last updated 2026-06, no paywall.")
 
 
 @tool
@@ -82,8 +85,9 @@ def fetch_url(url: str) -> str:
 def extract_facts(text: str) -> str:
     """Extract structured facts from fetched page text."""
     return _record(
+        text,
         "Extracted: 3 pricing mentions, 1 customer quote, 1 stat "
-        "('62% of buyers compare at least 3 vendors')."
+        "('62% of buyers compare at least 3 vendors').",
     )
 
 
@@ -92,8 +96,9 @@ def extract_facts(text: str) -> str:
 def kb_search(query: str) -> str:
     """Search the internal knowledge base for relevant docs."""
     return _record(
+        query,
         f"3 KB matches for '{query}': 'Refund Policy v4', "
-        f"'Checkout Flow Overview', 'Q2 Support Macros'."
+        f"'Checkout Flow Overview', 'Q2 Support Macros'.",
     )
 
 
@@ -101,7 +106,7 @@ def kb_search(query: str) -> str:
 @px.stage("fetch_doc")
 def fetch_doc(doc_id: str) -> str:
     """Fetch the full text of a specific internal doc."""
-    return _record(f"Fetched '{doc_id}': last edited 6 weeks ago by the support team.")
+    return _record(doc_id, f"Fetched '{doc_id}': last edited 6 weeks ago by the support team.")
 
 
 @tool
@@ -109,8 +114,9 @@ def fetch_doc(doc_id: str) -> str:
 def summarize_doc(text: str) -> str:
     """Summarize a fetched internal doc down to the relevant point."""
     return _record(
+        text,
         "Summary: refunds are approved within 30 days, 10% restocking "
-        "fee, 5 business day processing."
+        "fee, 5 business day processing.",
     )
 
 
@@ -119,8 +125,9 @@ def summarize_doc(text: str) -> str:
 def competitor_search(query: str) -> str:
     """Identify the competitor(s) most relevant to the query."""
     return _record(
+        query,
         f"Top match for '{query}': Competitor X (closest feature overlap), "
-        f"Competitor Z (closest price point)."
+        f"Competitor Z (closest price point).",
     )
 
 
@@ -128,7 +135,9 @@ def competitor_search(query: str) -> str:
 @px.stage("fetch_pricing_page")
 def fetch_pricing_page(competitor: str) -> str:
     """Fetch a competitor's public pricing page."""
-    return _record(f"{competitor} pricing: $9.82/unit list, 12% volume discount over 500 units.")
+    return _record(
+        competitor, f"{competitor} pricing: $9.82/unit list, 12% volume discount over 500 units."
+    )
 
 
 @tool
@@ -136,7 +145,9 @@ def fetch_pricing_page(competitor: str) -> str:
 def compare_pricing(their_price: str) -> str:
     """Compare a fetched competitor price against our own list price."""
     return _record(
-        f"Comparison vs {their_price}: we're priced ~3% lower at list, " f"before volume discounts."
+        their_price,
+        f"Comparison vs {their_price}: we're priced ~3% lower at list, "
+        f"before volume discounts.",
     )
 
 
@@ -145,7 +156,7 @@ def compare_pricing(their_price: str) -> str:
 def review_search(query: str) -> str:
     """Find user reviews relevant to the query."""
     return _record(
-        f"Found 340 reviews mentioning '{query}' across 3 review sites " f"in the last quarter."
+        query, f"Found 340 reviews mentioning '{query}' across 3 review sites in the last quarter."
     )
 
 
@@ -153,7 +164,7 @@ def review_search(query: str) -> str:
 @px.stage("fetch_reviews")
 def fetch_reviews(source: str) -> str:
     """Fetch review text from a specific source."""
-    return _record(f"Pulled 340 review excerpts from {source}.")
+    return _record(source, f"Pulled 340 review excerpts from {source}.")
 
 
 @tool
@@ -161,7 +172,8 @@ def fetch_reviews(source: str) -> str:
 def score_sentiment(reviews: str) -> str:
     """Score the sentiment of a batch of fetched reviews."""
     return _record(
-        "Sentiment: 4.7/5 average, 72% positive, main complaint theme " "is shipping delays."
+        reviews,
+        "Sentiment: 4.7/5 average, 72% positive, main complaint theme is shipping delays.",
     )
 
 
@@ -169,21 +181,23 @@ def score_sentiment(reviews: str) -> str:
 @px.stage("query_metrics")
 def query_metrics(metric: str) -> str:
     """Query internal product metrics."""
-    return _record(f"'{metric}': 3.5% of sessions over the trailing 30 days, up from 3.1%.")
+    return _record(metric, f"'{metric}': 3.5% of sessions over the trailing 30 days, up from 3.1%.")
 
 
 @tool
 @px.stage("fetch_report")
 def fetch_report(name: str) -> str:
     """Fetch a saved internal analytics report."""
-    return _record(f"Fetched report '{name}': last refreshed yesterday, 14 rows.")
+    return _record(name, f"Fetched report '{name}': last refreshed yesterday, 14 rows.")
 
 
 @tool
 @px.stage("compute_trend")
 def compute_trend(series: str) -> str:
     """Compute the trend direction/magnitude for a metric series."""
-    return _record(f"Trend for {series}: +0.4pp MoM, accelerating for 2 consecutive months.")
+    return _record(
+        series, f"Trend for {series}: +0.4pp MoM, accelerating for 2 consecutive months."
+    )
 
 
 AGENT_TOOLS = {
