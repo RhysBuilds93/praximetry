@@ -45,9 +45,10 @@ def discard(action: str) -> str:
 
 
 def handle(request: str) -> str:
-    action = draft_action(request)
-    decision = await_approval(action)
-    return execute(action) if decision == "approved" else discard(action)
+    with px.run_context():
+        action = draft_action(request)
+        decision = await_approval(action)
+        return execute(action) if decision == "approved" else discard(action)
 
 
 REQUESTS = [

@@ -69,9 +69,10 @@ def generate(question: str, chunks: list[Document]) -> str:
 
 
 def handle(question: str) -> str:
-    tokens = embed_query(question)
-    chunks = vector_search(tokens)
-    return generate(question, chunks)
+    with px.run_context():
+        tokens = embed_query(question)
+        chunks = vector_search(tokens)
+        return generate(question, chunks)
 
 
 QUESTIONS = [
