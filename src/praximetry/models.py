@@ -52,6 +52,11 @@ class Run(BaseModel):
     ended_at: float | None = None
     experiment_id: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # Mirrors runtime._current_call, but as a field on this shared-by-reference instance
+    # rather than a contextvar: a call recorded inside a Task (.ainvoke() spawns one per
+    # call) never flows back into the context of whichever task awaits it, so
+    # capture_context() reads this to bridge that gap. See runtime.record_call().
+    last_call_id: str | None = None
 
 
 class Opportunity(BaseModel):
