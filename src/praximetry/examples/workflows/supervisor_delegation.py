@@ -14,7 +14,11 @@ from ._real import chat_model, clean_content, default_model, premium_model
 
 px.init(project="supervisor-delegation")
 
-SYSTEM = "You are a triage supervisor. Decide which domains this request touches."
+SYSTEM = (
+    "You are a triage supervisor. Decide which domains this request touches. "
+    'Respond with JSON only, no other text: {"domains": [...]}, where each '
+    "entry is one of billing, technical, general -- at least one."
+)
 
 
 class DomainClassification(BaseModel):
@@ -26,8 +30,9 @@ class DomainClassification(BaseModel):
 @px.stage("supervisor")
 async def supervisor(request: str) -> list[str]:
     await asyncio.sleep(0)
-    llm = chat_model(premium_model()).with_structured_output(DomainClassification)
-    result = await llm.ainvoke([SystemMessage(SYSTEM), HumanMessage(request)])
+    model = premium_model()
+    reply = await chat_model(model).ainvoke([SystemMessage(SYSTEM), HumanMessage(request)])
+    result = DomainClassification.model_validate_json(clean_content(reply, model))
     domains = list(dict.fromkeys(result.domains))
     return domains or ["general"]
 
