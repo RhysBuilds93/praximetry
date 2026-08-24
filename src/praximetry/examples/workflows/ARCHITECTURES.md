@@ -60,8 +60,9 @@ graph LR
     A --> E[synthesize]
 ```
 
-`supervisor_delegation`. `supervisor` classifies via a structured-output
-call (`with_structured_output(DomainClassification)`); 1-3 of 3 agents
+`supervisor_delegation`. `supervisor` classifies via a JSON-instructed call,
+validated into `DomainClassification` after stripping any leaked reasoning
+block (see `_real.clean_content`); 1-3 of 3 agents
 invoked per run (varies, unlike fixed fan-out). `handle()` is a plain
 function, so agent/synthesize `Call.stage` values are unqualified. Per
 the gather/join note, `synthesize` parents to `supervisor`, sharing its
