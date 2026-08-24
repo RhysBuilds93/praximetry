@@ -43,7 +43,9 @@ _bm25 = BM25Okapi([doc.page_content.lower().split() for doc in CORPUS])
 @px.stage("embed_query")
 def embed_query(question: str) -> list[str]:
     tokens = question.lower().split()
-    runtime.record_call(output_text=str(tokens), cost_usd=0)
+    runtime.record_call(
+        messages=[{"role": "user", "content": question}], output_text=str(tokens), cost_usd=0
+    )
     return tokens
 
 
@@ -52,7 +54,11 @@ def vector_search(query_tokens: list[str], top_k: int = 2) -> list[Document]:
     scores = _bm25.get_scores(query_tokens)
     ranked = sorted(range(len(CORPUS)), key=lambda i: scores[i], reverse=True)[:top_k]
     result = [CORPUS[i] for i in ranked]
-    runtime.record_call(output_text=str([d.metadata["key"] for d in result]), cost_usd=0)
+    runtime.record_call(
+        messages=[{"role": "user", "content": " ".join(query_tokens)}],
+        output_text=str([d.metadata["key"] for d in result]),
+        cost_usd=0,
+    )
     return result
 
 
@@ -69,9 +75,10 @@ def generate(question: str, chunks: list[Document]) -> str:
 
 
 def handle(question: str) -> str:
-    tokens = embed_query(question)
-    chunks = vector_search(tokens)
-    return generate(question, chunks)
+    with px.run_context():
+        tokens = embed_query(question)
+        chunks = vector_search(tokens)
+        return generate(question, chunks)
 
 
 QUESTIONS = [

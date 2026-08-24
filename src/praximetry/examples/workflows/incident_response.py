@@ -194,25 +194,31 @@ def publish_postmortem(draft: str) -> str:
 
 
 async def handle(incident: str) -> str:
-    category = triage(incident)
-    signals = await gather_signals(incident, category)
-    correlation = correlate(incident, signals)
-    remediation = PLAYBOOKS[category](incident, correlation)
+    # gather_signals fans out over concurrent .ainvoke() calls, each in its own
+    # asyncio.Task -- a Task's contextvar mutations don't propagate back to its
+    # caller, so each fetcher's lazily-created Run would otherwise be invisible
+    # to its siblings. Opening the run here, before the fan-out, means every
+    # Task inherits the same already-set run id.
+    with px.run_context():
+        category = triage(incident)
+        signals = await gather_signals(incident, category)
+        correlation = correlate(incident, signals)
+        remediation = PLAYBOOKS[category](incident, correlation)
 
-    feedback, draft = "", ""
-    for _ in range(MAX_REVISIONS):
-        draft = draft_postmortem(incident, correlation, remediation, feedback)
-        verdict = critique_postmortem(draft)
-        # Some providers (e.g. gpt-oss models via Bedrock's OpenAI-compatible
-        # endpoint) prefix every reply with a visible <reasoning>...</reasoning>
-        # block, so the verdict never actually starts with "approve" even when
-        # it ends with it -- a substring check is robust to that, and to a
-        # plain "approve" reply from providers that don't do this.
-        if "approve" in verdict.lower():
-            break
-        feedback = verdict
-    publish_postmortem(draft)
-    return draft
+        feedback, draft = "", ""
+        for _ in range(MAX_REVISIONS):
+            draft = draft_postmortem(incident, correlation, remediation, feedback)
+            verdict = critique_postmortem(draft)
+            # Some providers (e.g. gpt-oss models via Bedrock's OpenAI-compatible
+            # endpoint) prefix every reply with a visible <reasoning>...</reasoning>
+            # block, so the verdict never actually starts with "approve" even when
+            # it ends with it -- a substring check is robust to that, and to a
+            # plain "approve" reply from providers that don't do this.
+            if "approve" in verdict.lower():
+                break
+            feedback = verdict
+        publish_postmortem(draft)
+        return draft
 
 
 INCIDENTS = [
