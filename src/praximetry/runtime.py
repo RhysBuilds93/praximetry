@@ -17,7 +17,10 @@ _current_run: contextvars.ContextVar[Run | None] = contextvars.ContextVar("run",
 _stage_stack: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
     "stage_stack", default=()
 )
-# Most recently recorded call; asyncio.gather/create_task copy it so fan-out calls inherit the same parent.
+# Most recently recorded call; asyncio.gather/create_task copy it so fan-out calls
+# inherit the same parent -- but only forward, from parent to child at Task-creation
+# time. A child Task's own record_call() writes never flow back to whichever task
+# awaits it, so capture_context() reads Run.last_call_id (below) to bridge that gap.
 _current_call: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "current_call", default=None
 )
@@ -86,13 +89,14 @@ def stage_context(name: str):
 
 def capture_context() -> dict[str, Any]:
     """Serializable run/stage/call snapshot; carry explicitly across boundaries contextvars
-    don't survive (e.g. LangGraph's per-step executor), restore with restore_context()."""
+    don't survive (e.g. LangGraph's per-step executor, or reading back a call recorded
+    inside an awaited asyncio.Task), restore with restore_context()."""
     run = _current_run.get()
     return {
         "run_id": run.id if run else None,
         "run_project": run.project if run else None,
         "stage_stack": _stage_stack.get(),
-        "current_call_id": _current_call.get(),
+        "current_call_id": run.last_call_id if run else None,
     }
 
 
@@ -141,8 +145,12 @@ def record_call(call: Call | None = None, **kwargs: Any) -> Call:
         kwargs.setdefault("stage", current_stage())
         kwargs.setdefault("parent_call_id", _current_call.get())
         call = Call(run_id=run.id, **kwargs)
+    else:
+        run = _current_run.get()
     get_store().save_call(call)
     if cloud_sync.is_running():
         cloud_sync.enqueue(call)
     _current_call.set(call.id)
+    if run is not None:
+        run.last_call_id = call.id
     return call
