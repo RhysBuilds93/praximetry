@@ -67,9 +67,15 @@ def synthesize(request: str, findings: list[str]) -> str:
 
 
 async def handle(request: str) -> str:
-    domains = await supervisor(request)
-    findings = list(await asyncio.gather(*(AGENTS[d](request) for d in domains)))
-    return synthesize(request, findings)
+    # LangChain's .ainvoke() spawns a fresh asyncio.Task per call (coro_with_context
+    # in langchain_core.runnables.base), and a Task's contextvar mutations don't
+    # propagate back to its caller -- so each stage's lazily-created Run would
+    # otherwise be invisible to its siblings. Opening the run here, before any
+    # .ainvoke() happens, means every Task inherits the same already-set run id.
+    with px.run_context():
+        domains = await supervisor(request)
+        findings = list(await asyncio.gather(*(AGENTS[d](request) for d in domains)))
+        return synthesize(request, findings)
 
 
 REQUESTS = [
