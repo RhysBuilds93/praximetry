@@ -28,7 +28,9 @@ def await_approval(action: str) -> str:
     actions (delete/purge/drop/remove) are rejected; everything else is approved."""
     low = action.lower()
     result = "rejected" if any(k in low for k in DESTRUCTIVE_KEYWORDS) else "approved"
-    runtime.record_call(output_text=result, cost_usd=0)
+    runtime.record_call(
+        messages=[{"role": "user", "content": action}], output_text=result, cost_usd=0
+    )
     return result
 
 
@@ -45,9 +47,10 @@ def discard(action: str) -> str:
 
 
 def handle(request: str) -> str:
-    action = draft_action(request)
-    decision = await_approval(action)
-    return execute(action) if decision == "approved" else discard(action)
+    with px.run_context():
+        action = draft_action(request)
+        decision = await_approval(action)
+        return execute(action) if decision == "approved" else discard(action)
 
 
 REQUESTS = [
