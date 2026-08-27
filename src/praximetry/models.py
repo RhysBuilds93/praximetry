@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 def _id() -> str:
-    return uuid.uuid4().hex[:16]
+    return uuid.uuid4().hex
 
 
 class Call(BaseModel):

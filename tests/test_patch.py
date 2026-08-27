@@ -127,3 +127,32 @@ def test_error_path_records_error():
         pass
     c = get_store().calls()[0]
     assert c.error == "api down"
+
+
+def test_auto_instrument_logs_when_a_provider_patch_raises(monkeypatch, caplog):
+    import logging
+
+    spec = PROVIDERS[0]
+    monkeypatch.setattr(P, "_patched", set())
+
+    def broken(_spec):
+        raise AttributeError("SDK internals moved")
+
+    monkeypatch.setattr(P, "_patch", broken)
+
+    with caplog.at_level(logging.DEBUG, logger="praximetry.instrument.patch"):
+        assert P.auto_instrument() == []
+    assert any(spec.name in r.message for r in caplog.records)
+
+
+def test_stream_accumulate_failure_is_logged_not_swallowed_silently(caplog):
+    import logging
+
+    def boom_accumulate(chunk, state):
+        raise ValueError("bad chunk")
+
+    wrapper = P.SyncStreamWrapper(iter(["a"]), boom_accumulate, lambda state: None)
+
+    with caplog.at_level(logging.DEBUG, logger="praximetry.instrument.wrap"):
+        assert list(wrapper) == ["a"]
+    assert any("accumulate failed" in r.message for r in caplog.records)
