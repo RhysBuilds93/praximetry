@@ -149,6 +149,8 @@ def record_call(call: Call | None = None, **kwargs: Any) -> Call:
         run = _current_run.get()
     get_store().save_call(call)
     if cloud_sync.is_running():
+        if run is not None:
+            cloud_sync.note_run(run)
         cloud_sync.enqueue(call)
     _current_call.set(call.id)
     if run is not None:
