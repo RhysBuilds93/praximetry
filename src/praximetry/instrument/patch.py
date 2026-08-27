@@ -7,6 +7,7 @@ variants without touching user code.
 
 from __future__ import annotations
 
+import logging
 import time
 from contextlib import contextmanager
 from typing import Any
@@ -17,6 +18,8 @@ from ..runtime import get_overrides, record_call
 from .output import NormalizedOutput
 from .providers import PROVIDERS, ProviderSpec
 from .wrap import AsyncStreamWrapper, SyncStreamWrapper
+
+logger = logging.getLogger(__name__)
 
 _patched: set[str] = set()
 
@@ -62,7 +65,7 @@ def auto_instrument() -> list[str]:
             if _patch(spec):
                 done.append(spec.name)
         except Exception:  # a broken/renamed SDK internal must not crash init()
-            pass
+            logger.debug("auto_instrument: failed to patch %s", spec.name, exc_info=True)
     return done
 
 

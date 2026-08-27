@@ -8,8 +8,11 @@ so streamed calls are recorded just like buffered ones.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from collections.abc import Callable
+
+logger = logging.getLogger(__name__)
 
 Accumulate = Callable[[Any, dict[str, Any]], None]
 OnDone = Callable[[dict[str, Any]], None]
@@ -42,7 +45,7 @@ class SyncStreamWrapper:
         try:
             self._accumulate(chunk, self._state)
         except Exception:  # never let instrumentation break a stream
-            pass
+            logger.debug("stream accumulate failed", exc_info=True)
         return chunk
 
     def _finish(self) -> None:
@@ -87,8 +90,8 @@ class AsyncStreamWrapper:
             raise
         try:
             self._accumulate(chunk, self._state)
-        except Exception:
-            pass
+        except Exception:  # never let instrumentation break a stream
+            logger.debug("stream accumulate failed", exc_info=True)
         return chunk
 
     def _finish(self) -> None:

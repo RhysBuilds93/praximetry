@@ -9,6 +9,13 @@ from praximetry.runtime import STAGE_REGISTRY, record_call, run_context
 from praximetry.store import Store, get_store
 
 
+def test_generated_ids_use_full_uuid_entropy():
+    from praximetry.models import Call, Run
+
+    ids = {Call(run_id="r").id for _ in range(50)} | {Run().id for _ in range(50)}
+    assert all(len(i) == 32 for i in ids)
+
+
 def test_pricing_known_and_prefix():
     assert pricing.cost_usd("claude-sonnet-5", 1_000_000, 0) == 3.0
     assert pricing.cost_usd("claude-haiku-4-5-20251001", 0, 1_000_000) == 5.0
