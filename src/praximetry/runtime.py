@@ -9,6 +9,7 @@ from typing import Any, ContextManager
 from collections.abc import Callable
 
 from . import cloud_sync
+from ._hooks import Hook
 from .config import get_config
 from .models import Call, Run
 from .store import get_store
@@ -30,13 +31,12 @@ _overrides: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextV
 
 STAGE_REGISTRY: dict[str, Callable[..., Any]] = {}  # so eval/optimize can re-run stages by name
 
-_policy_hook: Callable[[str], ContextManager[None]] | None = None
+policy_hook: Hook[Callable[[str], ContextManager[None]]] = Hook()
 
 
 def set_policy_hook(fn: Callable[[str], ContextManager[None]] | None) -> None:
     """Register (or clear, with None) the policy hook applied around every @stage call."""
-    global _policy_hook
-    _policy_hook = fn
+    policy_hook.set(fn)
 
 
 def current_run(create: bool = True) -> Run | None:
@@ -129,10 +129,10 @@ def override_context(model: str | None = None, prompt_transform=None):
 
 @contextmanager
 def policy_scope(stage: str):
-    if _policy_hook is None:
+    if policy_hook.fn is None:
         yield
         return
-    with _policy_hook(stage):
+    with policy_hook.fn(stage):
         yield
 
 

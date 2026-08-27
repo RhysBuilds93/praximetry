@@ -14,6 +14,7 @@ from typing import Any
 from collections.abc import Callable
 
 from .. import pricing
+from .._hooks import Hook
 from ..runtime import get_overrides, record_call
 from .output import NormalizedOutput
 from .providers import PROVIDERS, ProviderSpec
@@ -29,7 +30,7 @@ _patched: set[str] = set()
 # `auto_instrument()`-patched SDK client, not just direct `record_call` use.
 # The hook is expected to raise to unwind the call stack before any network
 # contact happens.
-_capture_hook: Callable[[dict], Any] | None = None
+capture_hook: Hook[Callable[[dict], Any]] = Hook()
 
 
 def _unwrap_for_parsing(resp: Any) -> Any:
@@ -49,12 +50,8 @@ def capturing(hook: Callable[[dict], Any]):
     `hook` receives {"provider", "model", "messages", "tools"} and is
     expected to raise to halt execution before `original(...)` is invoked.
     """
-    global _capture_hook
-    prev, _capture_hook = _capture_hook, hook
-    try:
+    with capture_hook.bound(hook):
         yield
-    finally:
-        _capture_hook = prev
 
 
 def auto_instrument() -> list[str]:
@@ -128,7 +125,7 @@ def _prepare_call(kwargs: dict[str, Any], messages_key: str, provider: str, adap
             "messages": messages,
             "tools": kwargs.get("tools", []),
         }
-        if _capture_hook is not None
+        if capture_hook.fn is not None
         else None
     )
     return kwargs, model, messages, capture_payload
@@ -156,7 +153,7 @@ def _instrument(
                 kwargs, messages_key, provider, adapter
             )
             if capture_payload is not None:
-                return _capture_hook(capture_payload)
+                return capture_hook.fn(capture_payload)
             t0 = time.perf_counter()
             if force_stream or kwargs.get("stream"):
                 resp = await original(self, *args, **kwargs)
@@ -180,7 +177,7 @@ def _instrument(
             kwargs, messages_key, provider, adapter
         )
         if capture_payload is not None:
-            return _capture_hook(capture_payload)
+            return capture_hook.fn(capture_payload)
         t0 = time.perf_counter()
         if force_stream or kwargs.get("stream"):
             resp = original(self, *args, **kwargs)

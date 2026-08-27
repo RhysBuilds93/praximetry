@@ -16,6 +16,17 @@ def test_generated_ids_use_full_uuid_entropy():
     assert all(len(i) == 32 for i in ids)
 
 
+def test_hook_bound_restores_previous_on_exit():
+    from praximetry._hooks import Hook
+
+    h = Hook()
+    assert h.fn is None
+    h.set(lambda: "outer")
+    with h.bound(lambda: "inner"):
+        assert h.fn() == "inner"
+    assert h.fn() == "outer"
+
+
 def test_pricing_known_and_prefix():
     assert pricing.cost_usd("claude-sonnet-5", 1_000_000, 0) == 3.0
     assert pricing.cost_usd("claude-haiku-4-5-20251001", 0, 1_000_000) == 5.0
