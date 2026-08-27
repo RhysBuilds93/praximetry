@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from pathlib import Path
@@ -10,6 +11,8 @@ from typing import Any
 
 from .config import get_config
 from .models import Call, EvalResult, Experiment, Run
+
+logger = logging.getLogger(__name__)
 
 # Single source of truth for table shape: both the initial CREATE TABLE and the
 # startup migration (below) are generated from this, so a column added here is
@@ -89,6 +92,30 @@ _SCHEMA = (
 )
 
 
+def _insert_sql(table: str) -> str:
+    """`INSERT OR REPLACE` naming every column explicitly.
+
+    A DB migrated by `_migrate` gets new columns appended, so its on-disk order
+    diverges from a fresh `CREATE TABLE`; positional `VALUES` would then land
+    fields in the wrong columns. Named columns bind by name regardless of order.
+    The value tuple passed by each `save_*` must follow `_TABLES[table]` order.
+    """
+    cols = [col for col, _ in _TABLES[table]]
+    return (
+        f"INSERT OR REPLACE INTO {table} ({', '.join(cols)}) "
+        f"VALUES ({', '.join('?' * len(cols))})"
+    )
+
+
+def _warn_if_truncated(what: str, rows: list, limit: int) -> None:
+    if len(rows) >= limit:
+        logger.warning(
+            "store.%s hit limit=%d; older rows omitted — pass a higher limit if you need them",
+            what,
+            limit,
+        )
+
+
 class Store:
     def __init__(self, db_path: str | Path | None = None):
         self.db_path = Path(db_path) if db_path else get_config().db_path
@@ -102,8 +129,7 @@ class Store:
     def _migrate(c: sqlite3.Connection) -> None:
         """`CREATE TABLE IF NOT EXISTS` is a no-op against a pre-existing table, so a
         `.praximetry/*.db` created before a column existed stays missing it forever
-        — not just the field, but silently breaking the positional INSERTs in
-        `save_*` the moment they're next called against that file. Diff each
+        and any read/write of that column raises against that file. Diff each
         table's on-disk columns against `_TABLES` and ALTER in whatever's missing,
         so adding a column to `_TABLES` is the only step a future schema change
         needs — no new one-off migration per column."""
@@ -126,7 +152,7 @@ class Store:
     def save_run(self, run: Run) -> None:
         with self._conn() as c:
             c.execute(
-                "INSERT OR REPLACE INTO runs VALUES (?,?,?,?,?,?,?)",
+                _insert_sql("runs"),
                 (
                     run.id,
                     run.project,
@@ -141,11 +167,7 @@ class Store:
     def save_call(self, call: Call) -> None:
         with self._conn() as c:
             c.execute(
-                """INSERT OR REPLACE INTO calls
-                   (id, run_id, parent_call_id, stage, provider, model, messages,
-                    output_text, reasoning_text, tool_calls, structured_output, content_parts,
-                    input_tokens, output_tokens, cost_usd, latency_ms, ts, error, metadata)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                _insert_sql("calls"),
                 (
                     call.id,
                     call.run_id,
@@ -172,7 +194,7 @@ class Store:
     def save_eval_result(self, r: EvalResult) -> None:
         with self._conn() as c:
             c.execute(
-                "INSERT OR REPLACE INTO eval_results VALUES (?,?,?,?,?,?,?,?,?,?)",
+                _insert_sql("eval_results"),
                 (
                     r.id,
                     r.experiment_id,
@@ -190,7 +212,7 @@ class Store:
     def save_experiment(self, e: Experiment) -> None:
         with self._conn() as c:
             c.execute(
-                "INSERT OR REPLACE INTO experiments VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                _insert_sql("experiments"),
                 (
                     e.id,
                     e.name,
@@ -215,6 +237,7 @@ class Store:
         q += " ORDER BY started_at DESC LIMIT ?"
         args.append(limit)
         rows = self._conn().execute(q, args).fetchall()
+        _warn_if_truncated("runs", rows, limit)
         return [self._row_to_run(r) for r in rows]
 
     @staticmethod
@@ -250,6 +273,7 @@ class Store:
         q += " ORDER BY calls.ts DESC LIMIT ?"
         args.append(limit)
         rows = self._conn().execute(q, args).fetchall()
+        _warn_if_truncated("calls", rows, limit)
         return [self._row_to_call(r) for r in rows]
 
     @staticmethod
