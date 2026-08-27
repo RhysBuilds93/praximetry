@@ -17,6 +17,8 @@ from pathlib import Path
 
 import typer
 
+from praximetry import __version__, _banner
+
 app = typer.Typer(
     no_args_is_help=True, add_completion=False, help="Drop-in observability for your LLM agents."
 )
@@ -24,7 +26,11 @@ app = typer.Typer(
 
 @app.callback()
 def _main() -> None:
-    pass
+    if sys.stdout.isatty():
+        typer.echo(_banner.render())
+        typer.secho(f"  CLI  v{__version__}", fg=typer.colors.BRIGHT_BLACK)
+        typer.echo("─" * 60)
+        typer.echo("Type praximetry --help to see all commands.\n")
 
 
 def _import_module(module: str | None) -> None:
