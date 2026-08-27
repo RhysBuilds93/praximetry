@@ -29,3 +29,4 @@ def test_summary_command():
     res = runner.invoke(app, ["summary"])
     assert res.exit_code == 0
     assert "classify" in res.output and "claude-opus-4-8" in res.output
+    assert "stage" in res.output and "cost" in res.output  # rich table header
