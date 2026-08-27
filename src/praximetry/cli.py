@@ -172,7 +172,16 @@ def eval_cmd(
                 fail_under = client.fetch_eval_config(project=project)["fail_under"]
             typer.echo(f"aggregate quality={quality:.2f}")
         else:
-            result = push_results[stage]
+            if stage in push_results:
+                result = push_results[stage]
+            elif len(push_results) == 1:
+                result = next(iter(push_results.values()))
+            else:
+                typer.echo(
+                    f"error: no scored result for stage '{stage}' "
+                    f"(got: {', '.join(sorted(push_results))})"
+                )
+                raise typer.Exit(EXIT_UNUSABLE)
             quality, pass_rate = result["quality"], result["pass_rate"]
             typer.echo(
                 f"quality={quality:.2f} pass_rate={pass_rate:.0%} cost=${result['cost_usd']:.4f} "
