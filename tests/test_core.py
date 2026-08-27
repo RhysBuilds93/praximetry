@@ -121,6 +121,41 @@ def test_migrate_adds_missing_column_to_preexisting_table():
         record_call(provider="fake", model="gpt-4o", stage="plan")
 
 
+def test_save_run_survives_out_of_order_migrated_columns():
+    """A `runs` table from before `name` existed: migration appends `name` last,
+    so on-disk column order no longer matches a fresh CREATE TABLE. Named-column
+    INSERTs must still land each field in the right column."""
+    db_path = config.get_config().db_path
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE runs (id TEXT PRIMARY KEY, project TEXT, started_at REAL, "
+        "ended_at REAL, experiment_id TEXT, metadata TEXT)"
+    )
+    conn.commit()
+    conn.close()
+
+    store = Store(db_path)
+    with run_context(name="hello") as run:
+        run.project = "proj"
+    store.save_run(run)
+
+    got = store.runs()[0]
+    assert got.name == "hello"
+    assert got.project == "proj"
+
+
+def test_calls_query_logs_when_truncated_at_limit(caplog):
+    import logging
+
+    with run_context(name="many"):
+        for _ in range(3):
+            record_call(provider="fake", model="gpt-4o")
+
+    with caplog.at_level(logging.WARNING, logger="praximetry.store"):
+        get_store().calls(limit=2)
+    assert any("limit=2" in r.message for r in caplog.records)
+
+
 def test_parent_call_id_chains_sequential_calls():
     with run_context(name="seq"):
         a = record_call(provider="fake", model="gpt-4o", stage="plan")
