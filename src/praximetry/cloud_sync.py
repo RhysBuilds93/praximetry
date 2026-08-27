@@ -75,10 +75,15 @@ def start(
     with _lock:
         _client = client
         _flush_interval = flush_interval
+        if _thread is not None and _thread.is_alive():
+            if _queue.maxsize != maxsize:
+                logger.warning(
+                    "cloud_sync: maxsize change ignored — worker already running with maxsize=%d",
+                    _queue.maxsize,
+                )
+            return
         if _queue.maxsize != maxsize:
             _queue = queue.Queue(maxsize=maxsize)
-        if _thread is not None and _thread.is_alive():
-            return
         _stop_event.clear()
         _thread = threading.Thread(target=_worker_loop, name="praximetry-cloud-sync", daemon=True)
         _thread.start()
@@ -125,7 +130,7 @@ def enqueue(call: Call) -> None:
     """Non-blocking enqueue. Drops (and rate-limit-logs) on a full queue —
     never blocks, never raises."""
     try:
-        _queue.put_nowait(call)
+        _queue.put_nowait(call)  # module global; start() only swaps it while no worker runs
     except queue.Full:
         _log_drop()
 
@@ -166,12 +171,9 @@ def _drain_and_push() -> None:
     for c in calls:
         by_run.setdefault(c.run_id, []).append(c)
     for run_id, group in by_run.items():
-        run = _run_cache.get(run_id)
-        if run is None:
-            logger.warning(
-                "cloud_sync: no cached Run for run_id=%s — dropping %d call(s)", run_id, len(group)
-            )
-            continue
+        # A hand-built Call(run_id=...) whose Run never went through note_run
+        # still carries enough to push; synthesize a bare Run rather than drop it.
+        run = _run_cache.get(run_id) or Run(id=run_id)
         try:
             hook = _redaction_hook
             payload = [hook(c) if hook else c for c in group]

@@ -102,6 +102,31 @@ def test_queue_full_drops_and_logs_without_raising(stub, caplog):
     assert any("dropped" in r.message.lower() for r in caplog.records)
 
 
+def test_uncached_run_is_synthesized_not_dropped(stub):
+    app, http = stub
+    cloud_sync.start(CloudClient("", VALID_KEY, client=http))
+
+    _, call = _make_run_and_call()  # run intentionally never note_run'd
+    cloud_sync.enqueue(call)
+    cloud_sync.flush_now()
+
+    assert len(app.state.received["traces"]) == 1
+    body = app.state.received["traces"][0]
+    assert body["run"]["id"] == call.run_id
+    assert body["calls"][0]["id"] == call.id
+
+
+def test_maxsize_change_ignored_while_worker_running(stub, caplog):
+    _, http = stub
+    client = CloudClient("", VALID_KEY, client=http)
+    cloud_sync.start(client, maxsize=500)
+
+    with caplog.at_level(logging.WARNING, logger="praximetry.cloud_sync"):
+        cloud_sync.start(client, maxsize=10)
+
+    assert any("maxsize" in r.message for r in caplog.records)
+
+
 def test_network_down_does_not_raise_and_worker_survives():
     client = CloudClient("http://127.0.0.1:1", "some-key")
     cloud_sync.start(client)
