@@ -9,8 +9,8 @@ dropped — the local sqlite store (already written by `record_call` before this
 is ever reached) is completely unaffected either way; this is purely a
 best-effort duplicate path to the cloud.
 
-Mirrors `runtime.py`'s `set_policy_hook()` shape for the redaction extension
-point: a single settable callable, no-op when unset.
+The redaction extension point is a `_hooks.Hook`, same as `runtime`'s policy
+hook and `instrument.patch`'s capture hook.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import time
 from typing import TYPE_CHECKING
 from collections.abc import Callable
 
+from ._hooks import Hook
 from .models import Call, Run
 
 if TYPE_CHECKING:
@@ -41,7 +42,7 @@ _stop_event = threading.Event()
 _lock = threading.Lock()
 
 _run_cache: dict[str, Run] = {}
-_redaction_hook: Callable[[Call], Call] | None = None
+redaction_hook: Hook[Callable[[Call], Call]] = Hook()
 
 _drop_count = 0
 _last_drop_log = 0.0
@@ -57,8 +58,7 @@ def set_redaction_hook(fn: Callable[[Call], Call] | None) -> None:
     """Register (or clear, with None) a hook applied to each Call right before
     it's serialized into the /api/traces payload. Never touches the locally
     stored Call — only what leaves the process over HTTP."""
-    global _redaction_hook
-    _redaction_hook = fn
+    redaction_hook.set(fn)
 
 
 def is_running() -> bool:
@@ -106,11 +106,11 @@ def stop(timeout: float = 2.0) -> None:
 def reset() -> None:
     """Testing hook: stop the worker and clear all module state so nothing
     leaks (thread, client, cached runs, redaction hook) across tests."""
-    global _client, _run_cache, _redaction_hook, _drop_count, _last_drop_log, _queue
+    global _client, _run_cache, _drop_count, _last_drop_log, _queue
     stop(timeout=0.5)
     _client = None
     _run_cache = {}
-    _redaction_hook = None
+    redaction_hook.set(None)
     _drop_count = 0
     _last_drop_log = 0.0
     _queue = queue.Queue(maxsize=_DEFAULT_MAXSIZE)
@@ -175,7 +175,7 @@ def _drain_and_push() -> None:
         # still carries enough to push; synthesize a bare Run rather than drop it.
         run = _run_cache.get(run_id) or Run(id=run_id)
         try:
-            hook = _redaction_hook
+            hook = redaction_hook.fn
             payload = [hook(c) if hook else c for c in group]
             client.push_trace(run, payload)
         except Exception:
