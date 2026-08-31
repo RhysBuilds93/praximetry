@@ -88,7 +88,8 @@ def eval_cmd(
 
     --scorer (repeatable) sets which scorers the cloud runs, resolved
     explicit flag > --config "scorers" > hosted project/stage default >
-    unset (server default).
+    unset (server default). The hosted tier needs a project; a bare --stage
+    run has no addressable hosted config, same as --fail-under.
 
     Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (default localhost).
     """
@@ -164,7 +165,7 @@ def eval_cmd(
 
         if scorer:
             scorers = list(scorer)
-        elif cfg.get("scorers"):
+        elif cfg.get("scorers") is not None:
             scorers = list(cfg["scorers"])
         elif hosted_default_scorers is not None:
             scorers = hosted_default_scorers

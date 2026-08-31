@@ -592,7 +592,31 @@ def test_eval_config_file_scorers_used_when_no_flag(monkeypatch, fake_llm, tmp_p
     assert http.app.state.captures_seen[0]["scorers"] == ["from_config"]
 
 
-def test_eval_hosted_default_scorers_used_when_no_flag_or_config(monkeypatch, fake_llm):
+def test_eval_config_file_empty_scorers_list_overrides_hosted_default(
+    monkeypatch, fake_llm, tmp_path
+):
+    http = TestClient(
+        _stub_app(
+            score_by_example={"e1": 1.0, "e2": 1.0},
+            eval_scorers={("proj", None): ["would_win_without_config"]},
+        )
+    )
+    _patch_client(monkeypatch, http)
+
+    @praximetry.stage("plan_action")
+    def plan_action(text):
+        return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
+
+    cfg = tmp_path / "eval.json"
+    cfg.write_text('{"stage": "plan_action", "scorers": []}')
+
+    result = runner.invoke(cli_app, ["eval", "--config", str(cfg)])
+
+    assert result.exit_code == 0, result.output
+    assert http.app.state.captures_seen[0]["scorers"] == []
+
+
+def test_eval_project_run_uses_hosted_config_scorers(monkeypatch, fake_llm):
     http = TestClient(
         _stub_app(
             score_by_example={"e1": 1.0, "e2": 0.5},
@@ -607,6 +631,26 @@ def test_eval_hosted_default_scorers_used_when_no_flag_or_config(monkeypatch, fa
 
     assert result.exit_code == 0, result.output
     assert all(b["scorers"] == ["hosted_a", "hosted_b"] for b in http.app.state.captures_seen)
+
+
+def test_eval_no_args_default_run_uses_hosted_default_scorers(monkeypatch, fake_llm):
+    http = TestClient(
+        _stub_app(
+            score_by_example={"e1": 1.0, "e2": 1.0},
+            eval_default={"project": "proj", "stage": "plan_action"},
+            eval_scorers={("proj", "plan_action"): ["hosted_default_scorer"]},
+        )
+    )
+    _patch_client(monkeypatch, http)
+
+    @praximetry.stage("plan_action")
+    def plan_action(text):
+        return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
+
+    result = runner.invoke(cli_app, ["eval"])
+
+    assert result.exit_code == 0, result.output
+    assert http.app.state.captures_seen[0]["scorers"] == ["hosted_default_scorer"]
 
 
 def test_eval_no_scorer_anywhere_omits_the_field(monkeypatch, fake_llm):
