@@ -89,7 +89,11 @@ class CloudClient:
         )
 
     def push_captures(
-        self, stage: str, captures: list[CapturedRequest], experiment_id: str | None = None
+        self,
+        stage: str,
+        captures: list[CapturedRequest],
+        experiment_id: str | None = None,
+        scorers: list[str] | None = None,
     ) -> dict:
         """POST captured request shapes to /api/eval/captures. The cloud scores
         them synchronously — the response already carries quality/pass_rate/cost.
@@ -97,10 +101,15 @@ class CloudClient:
         `experiment_id` groups multiple pushes (e.g. one per stage in a
         `--project` run) into a single batch that `fetch_results` can look
         back up. The server generates one if omitted, but a caller pushing
-        several stages under one run must supply the same id on every call."""
+        several stages under one run must supply the same id on every call.
+
+        `scorers` is the resolved scorer list (CLI flag / config file / hosted
+        default); omitted entirely when unset so the server picks its default."""
         body: dict = {"stage": stage, "captures": [c.model_dump() for c in captures]}
         if experiment_id:
             body["experiment_id"] = experiment_id
+        if scorers is not None:
+            body["scorers"] = scorers
         resp = self._check(
             self._client.post(
                 self._url("/api/eval/captures"),
