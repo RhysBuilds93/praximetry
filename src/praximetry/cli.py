@@ -85,6 +85,9 @@ def eval_cmd(
     import json
     import uuid
 
+    from rich.markup import escape
+
+    from .console import console
     from .eval import CaptureError, capture_request
     from .eval.hosted import EXIT_GATE_FAILED, EXIT_OK, EXIT_UNUSABLE, CloudError, client_from_env
 
@@ -107,23 +110,28 @@ def eval_cmd(
             client = client_from_env()
             default = client.fetch_eval_default()
         except CloudError as e:
-            typer.echo(f"error: {e}")
+            console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
             raise typer.Exit(EXIT_UNUSABLE) from e
         if default is None:
-            typer.echo(
-                "error: no --stage/--project given and no default saved — "
-                "set one in the dashboard (Save as default) or pass --config"
+            console.print(
+                "[danger]error:[/danger] no --stage/--project given and no default saved — "
+                "set one in the dashboard (Save as default) or pass --config",
+                soft_wrap=True,
             )
             raise typer.Exit(EXIT_UNUSABLE)
         stage = stage if stage is not None else default.get("stage")
         project = project if project is not None else default.get("project")
         fail_under = fail_under if fail_under is not None else default.get("fail_under")
-        typer.echo(f"using default: project={project}" + (f" stage={stage}" if stage else ""))
+        console.print(
+            f"using default: project={project}" + (f" stage={stage}" if stage else ""),
+            markup=False,
+            soft_wrap=True,
+        )
     else:
         try:
             client = client_from_env()
         except CloudError as e:
-            typer.echo(f"error: {e}")
+            console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
             raise typer.Exit(EXIT_UNUSABLE) from e
 
     try:
@@ -135,7 +143,7 @@ def eval_cmd(
             else (f"stage '{stage}' in project '{project}'" if project else f"stage '{stage}'")
         )
         if not dataset.examples:
-            typer.echo(f"No golden examples for {scope}.")
+            console.print(f"No golden examples for {scope}.", markup=False, soft_wrap=True)
             raise typer.Exit(EXIT_UNUSABLE)
 
         experiment_id = str(uuid.uuid4())
@@ -144,9 +152,9 @@ def eval_cmd(
             try:
                 captures_by_stage.setdefault(ex.stage, []).append(capture_request(ex))
             except CaptureError as e:
-                typer.echo(f"  [SKIP] {ex.stage}/{ex.id}: {e}")
+                console.print(f"  [SKIP] {ex.stage}/{ex.id}: {e}", markup=False, soft_wrap=True)
         if not any(captures_by_stage.values()):
-            typer.echo("No captures produced — nothing to evaluate.")
+            console.print("No captures produced — nothing to evaluate.", soft_wrap=True)
             raise typer.Exit(EXIT_UNUSABLE)
 
         push_results: dict[str, dict] = {}
@@ -155,40 +163,51 @@ def eval_cmd(
                 stage_name, caps, experiment_id=experiment_id
             )
             if project and not stage and push_results[stage_name].get("skipped"):
-                typer.echo(
+                console.print(
                     f"skipped (no matching golden example) in {stage_name}: "
-                    f"{', '.join(push_results[stage_name]['skipped'])}"
+                    f"{', '.join(push_results[stage_name]['skipped'])}",
+                    markup=False,
+                    soft_wrap=True,
                 )
 
         if project and not stage:
             results = client.fetch_results(project=project, experiment_id=experiment_id)
             for stage_name, stage_result in results["stages"].items():
-                typer.echo(
+                console.print(
                     f"  {stage_name}: quality={stage_result['quality']:.2f} "
-                    f"examples={stage_result['count']}"
+                    f"examples={stage_result['count']}",
+                    markup=False,
+                    soft_wrap=True,
                 )
             quality = results["aggregate_quality"]
             if fail_under is None:
                 fail_under = client.fetch_eval_config(project=project)["fail_under"]
-            typer.echo(f"aggregate quality={quality:.2f}")
+            console.print(f"aggregate quality={quality:.2f}", soft_wrap=True)
         else:
             if stage in push_results:
                 result = push_results[stage]
             elif len(push_results) == 1:
                 result = next(iter(push_results.values()))
             else:
-                typer.echo(
-                    f"error: no scored result for stage '{stage}' "
-                    f"(got: {', '.join(sorted(push_results))})"
+                console.print(
+                    f"[danger]error:[/danger] no scored result for stage '{escape(str(stage))}' "
+                    f"(got: {escape(', '.join(sorted(push_results)))})",
+                    soft_wrap=True,
                 )
                 raise typer.Exit(EXIT_UNUSABLE)
             quality, pass_rate = result["quality"], result["pass_rate"]
-            typer.echo(
+            console.print(
                 f"quality={quality:.2f} pass_rate={pass_rate:.0%} cost=${result['cost_usd']:.4f} "
-                f"examples={result['count']}"
+                f"examples={result['count']}",
+                markup=False,
+                soft_wrap=True,
             )
             if result.get("skipped"):
-                typer.echo(f"skipped (no matching golden example): {', '.join(result['skipped'])}")
+                console.print(
+                    f"skipped (no matching golden example): {', '.join(result['skipped'])}",
+                    markup=False,
+                    soft_wrap=True,
+                )
             if fail_under is None:
                 fail_under = (
                     client.fetch_eval_config(project=project, stage=stage)["fail_under"]
@@ -196,13 +215,19 @@ def eval_cmd(
                     else 0.9
                 )
     except CloudError as e:
-        typer.echo(f"error: {e}")
+        console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
         raise typer.Exit(EXIT_UNUSABLE) from e
 
     if quality < fail_under:
-        typer.echo(f"FAIL: quality {quality:.3f} < --fail-under {fail_under:.3f}")
+        console.print(
+            f"[danger]FAIL[/danger]: quality {quality:.3f} < --fail-under {fail_under:.3f}",
+            soft_wrap=True,
+        )
         raise typer.Exit(EXIT_GATE_FAILED)
-    typer.echo(f"PASS: quality {quality:.3f} >= --fail-under {fail_under:.3f}")
+    console.print(
+        f"[success]PASS[/success]: quality {quality:.3f} >= --fail-under {fail_under:.3f}",
+        soft_wrap=True,
+    )
     raise typer.Exit(EXIT_OK)
 
 
@@ -236,6 +261,9 @@ def optimize(
 
     Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (default localhost).
     """
+    from rich.markup import escape
+
+    from .console import console
     from .eval import CaptureError, capture_request
     from .eval.hosted import CloudError, client_from_env
 
@@ -244,13 +272,13 @@ def optimize(
         _import_module(module)
         dataset = client.fetch_corpus(stage)
         if not dataset.examples:
-            typer.echo(f"No golden examples for stage '{stage}'.")
+            console.print(f"No golden examples for stage '{stage}'.", markup=False, soft_wrap=True)
             raise typer.Exit(1)
 
         try:
             captured = capture_request(dataset.examples[0])
         except CaptureError as e:
-            typer.echo(f"error: {e}")
+            console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
             raise typer.Exit(1) from e
 
         result = client.push_optimize_capture(
@@ -262,23 +290,30 @@ def optimize(
             max_trials=max_trials,
         )
     except CloudError as e:
-        typer.echo(f"error: {e}")
+        console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
         raise typer.Exit(1) from e
 
     winner = result.get("winner")
-    typer.echo(
-        f"stage={result.get('stage', stage)} examples={result.get('examples', result.get('count', '?'))}"
+    console.print(
+        f"stage={result.get('stage', stage)} examples={result.get('examples', result.get('count', '?'))}",
+        markup=False,
+        soft_wrap=True,
     )
     if winner:
         savings = result.get("savings_pct")
         savings_str = f" savings={savings:.0%}" if savings is not None else ""
-        typer.echo(f"winner found: {winner}{savings_str}")
+        console.print(
+            f"[success]winner found[/success]: {escape(str(winner))}{escape(savings_str)}",
+            soft_wrap=True,
+        )
     else:
-        typer.echo("no winner found (nothing beat baseline within tolerance)")
+        console.print("no winner found (nothing beat baseline within tolerance)", soft_wrap=True)
     if result.get("truncated"):
-        typer.echo("warning: run was truncated (max_trials reached)")
+        console.print(
+            "[warn]warning:[/warn] run was truncated (max_trials reached)", soft_wrap=True
+        )
     if result.get("errors"):
-        typer.echo(f"errors: {result['errors']}")
+        console.print(f"[danger]errors:[/danger] {escape(str(result['errors']))}", soft_wrap=True)
     raise typer.Exit(0)
 
 
@@ -300,25 +335,32 @@ def apply(
     import time
     from pathlib import Path
 
+    from rich.markup import escape
+
+    from .console import console
     from .eval.hosted import CloudError, client_from_env
 
     try:
         client = client_from_env()
         winner = client.fetch_winner(stage)
     except CloudError as e:
-        typer.echo(f"error: {e}")
+        console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
         raise typer.Exit(2) from e
 
     if winner is None:
-        typer.echo(
+        console.print(
             f"no optimize run found for stage '{stage}' — run "
-            f"`praximetry optimize --stage {stage} -m your_module` first"
+            f"`praximetry optimize --stage {stage} -m your_module` first",
+            markup=False,
+            soft_wrap=True,
         )
         raise typer.Exit(1)
 
     if not winner.get("model") and not winner.get("transforms"):
-        typer.echo(
-            f"optimize run for stage '{stage}' completed but found no winner — nothing to apply."
+        console.print(
+            f"optimize run for stage '{stage}' completed but found no winner — nothing to apply.",
+            markup=False,
+            soft_wrap=True,
         )
         raise typer.Exit(0)
 
@@ -341,9 +383,10 @@ def apply(
 
     savings = winner.get("savings_pct")
     savings_str = f" savings={savings:.0%}" if savings is not None else ""
-    typer.echo(
-        f"applied stage='{stage}' model={winner.get('model')} "
-        f"transforms={winner.get('transforms') or []}{savings_str} -> {path}"
+    console.print(
+        f"[success]applied[/success] stage='{escape(stage)}' model={escape(str(winner.get('model')))} "
+        f"transforms={escape(str(winner.get('transforms') or []))}{savings_str} -> {path}",
+        soft_wrap=True,
     )
     raise typer.Exit(0)
 
@@ -351,21 +394,38 @@ def apply(
 @app.command()
 def summary() -> None:
     """Print usage totals and per-stage breakdown."""
-    from .store import get_store
+    from rich.markup import escape
+    from rich.table import Table
 
+    from .console import ACCENT, console
     from .currency import fmt as money
+    from .store import get_store
 
     store = get_store()
     t = store.totals()
-    typer.echo(
+    console.print(
         f"calls={t['n']}  tokens_in={t['tin']}  tokens_out={t['tout']}  "
-        f"cost={money(t['cost'])}\n"
+        f"cost={money(t['cost'])}\n",
+        markup=False,
     )
+
+    table = Table(show_edge=False, header_style=f"bold {ACCENT}")
+    table.add_column("stage", overflow="fold")
+    table.add_column("model", overflow="fold")
+    table.add_column("n", justify="right")
+    table.add_column("in", justify="right")
+    table.add_column("out", justify="right")
+    table.add_column("cost", justify="right")
     for s in store.stage_summary():
-        typer.echo(
-            f"  {str(s['stage']):<24} {s['model']:<24} n={s['n']:<6} "
-            f"in={s['tin']:<9} out={s['tout']:<8} {money(s['cost'])}"
+        table.add_row(
+            escape(str(s["stage"])),
+            escape(str(s["model"])),
+            str(s["n"]),
+            str(s["tin"]),
+            str(s["tout"]),
+            money(s["cost"]),
         )
+    console.print(table)
 
 
 if __name__ == "__main__":
