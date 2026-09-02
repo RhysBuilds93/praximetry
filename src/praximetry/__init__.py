@@ -25,7 +25,7 @@ from .otel import instrument_otel, record_spans
 from .pricing import register_pricing
 from .runtime import current_run, record_call, run_context
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __all__ = [
     "init",
     "stage",
