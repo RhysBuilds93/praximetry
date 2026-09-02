@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "praximetry"
-version = "0.1.0"
+version = "0.1.1"
 description = "Drop-in observability for LLM agents: instrument once, record every call, inspect usage and cost locally."
 readme = "README.md"
 requires-python = ">=3.10"
