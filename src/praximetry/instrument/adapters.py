@@ -77,6 +77,12 @@ class OpenAIAdapter(OutputAdapter):
             for tc in (_g(message, "tool_calls", default=[]) or [])
         ]
         output_text, reasoning_text = split_embedded_reasoning(text, model)
+        if not reasoning_text:
+            reasoning_text = (
+                _g(message, "reasoning", default="")
+                or _g(message, "reasoning_content", default="")
+                or ""
+            )
         return NormalizedOutput(
             output_text=output_text,
             reasoning_text=reasoning_text,
@@ -87,11 +93,18 @@ class OpenAIAdapter(OutputAdapter):
 
     def accumulate(self, chunk: Any, state: dict[str, Any]) -> None:
         state.setdefault("text", "")
+        state.setdefault("reasoning", "")
         choices = getattr(chunk, "choices", None)
         if choices:
             delta = _g(choices[0], "delta", "content", default="") or ""
             state["text"] += delta
             state["tout"] = state.get("tout", 0) + (1 if delta else 0)
+            reasoning_delta = (
+                _g(choices[0], "delta", "reasoning", default="")
+                or _g(choices[0], "delta", "reasoning_content", default="")
+                or ""
+            )
+            state["reasoning"] += reasoning_delta
         usage = getattr(chunk, "usage", None)
         if usage is not None:
             state["tin"] = getattr(usage, "prompt_tokens", state.get("tin", 0)) or state.get(
@@ -104,6 +117,8 @@ class OpenAIAdapter(OutputAdapter):
     def finalize_stream(self, state: dict[str, Any]) -> NormalizedOutput:
         model = state.get("model", "")
         output_text, reasoning_text = split_embedded_reasoning(state.get("text", ""), model)
+        if not reasoning_text:
+            reasoning_text = state.get("reasoning", "")
         return NormalizedOutput(
             output_text=output_text,
             reasoning_text=reasoning_text,
