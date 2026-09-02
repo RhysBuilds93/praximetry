@@ -118,6 +118,51 @@ def test_openai_accumulate_and_finalize():
     assert out.tokens_in == 4 and out.tokens_out == 2
 
 
+def test_openai_parse_response_reasoning_field():
+    from types import SimpleNamespace as NS
+
+    message = NS(role="assistant", content="final answer", reasoning="let me think step by step")
+    resp = NS(
+        choices=[NS(message=message)],
+        usage=NS(prompt_tokens=5, completion_tokens=5),
+    )
+    out = OpenAIAdapter().parse_response(resp, "o1")
+    assert out.output_text == "final answer"
+    assert out.reasoning_text == "let me think step by step"
+
+
+def test_openai_parse_response_reasoning_content_field():
+    from types import SimpleNamespace as NS
+
+    message = NS(
+        role="assistant", content="security", reasoning_content="analyzing the incident category"
+    )
+    resp = NS(
+        choices=[NS(message=message)],
+        usage=NS(prompt_tokens=5, completion_tokens=5),
+    )
+    out = OpenAIAdapter().parse_response(resp, "claude-sonnet-5")
+    assert out.output_text == "security"
+    assert out.reasoning_text == "analyzing the incident category"
+
+
+def test_openai_accumulate_reasoning_deltas():
+    from types import SimpleNamespace as NS
+
+    adapter = OpenAIAdapter()
+    state: dict = {}
+    chunks = [
+        NS(choices=[NS(delta=NS(content="answer", reasoning_content="thinking "))], usage=None),
+        NS(choices=[NS(delta=NS(content="", reasoning_content="hard"))], usage=None),
+        NS(choices=[], usage=NS(prompt_tokens=4, completion_tokens=6)),
+    ]
+    for chunk in chunks:
+        adapter.accumulate(chunk, state)
+    out = adapter.finalize_stream(state)
+    assert out.output_text == "answer"
+    assert out.reasoning_text == "thinking hard"
+
+
 def test_anthropic_adapter_registered():
     assert isinstance(ADAPTERS["anthropic"], AnthropicAdapter)
 
