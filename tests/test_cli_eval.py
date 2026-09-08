@@ -33,12 +33,19 @@ def _stub_app(
     examples: list | None = None,
     eval_config: dict | None = None,
     eval_default: dict | None = None,
+    eval_scorers: dict | None = None,
 ) -> FastAPI:
     app = FastAPI()
     corpus_examples = examples if examples is not None else EXAMPLES
     batches: dict[str, list[dict]] = {}
     saved_config: dict = dict(eval_config or {})
     saved_default: dict | None = dict(eval_default) if eval_default else None
+    saved_scorers: dict = dict(eval_scorers or {})
+    captures_seen: list[dict] = []
+    app.state.captures_seen = captures_seen
+
+    def _scorers_for(project: str | None, stage: str | None):
+        return saved_scorers.get((project, stage), saved_scorers.get((project, None)))
 
     def _score(caps: list[dict]) -> dict:
         scores = [score_by_example.get(c["example_id"], 1.0) for c in caps]
@@ -70,6 +77,7 @@ def _stub_app(
     def captures(body: dict, authorization: str = Header(None)):
         if authorization != f"Bearer {VALID_KEY}":
             raise HTTPException(status_code=401, detail="bad key")
+        captures_seen.append(body)
         caps = body["captures"]
         experiment_id = body.get("experiment_id") or "generated-experiment-id"
         scored = _score(caps)
@@ -117,7 +125,12 @@ def _stub_app(
         if authorization != f"Bearer {VALID_KEY}":
             raise HTTPException(status_code=401, detail="bad key")
         fail_under = saved_config.get((project, stage), saved_config.get((project, None), 0.8))
-        return {"project": project, "stage": stage, "fail_under": fail_under}
+        return {
+            "project": project,
+            "stage": stage,
+            "fail_under": fail_under,
+            "scorers": _scorers_for(project, stage),
+        }
 
     @app.get("/api/eval/default")
     def get_default(authorization: str = Header(None)):
@@ -129,7 +142,11 @@ def _stub_app(
             (saved_default["project"], saved_default.get("stage")),
             saved_config.get((saved_default["project"], None), 0.8),
         )
-        return {**saved_default, "fail_under": fail_under}
+        return {
+            **saved_default,
+            "fail_under": fail_under,
+            "scorers": _scorers_for(saved_default["project"], saved_default.get("stage")),
+        }
 
     return app
 
@@ -511,3 +528,140 @@ def test_eval_stage_only_without_fail_under_keeps_default_point_nine(monkeypatch
 
     assert result.exit_code == 1, result.output  # 0.85 < 0.9 default
     assert "FAIL" in result.output
+
+
+def _patch_client(monkeypatch, http):
+    monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
+    import praximetry.eval.hosted as hosted_mod
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
+
+
+def test_eval_scorer_flag_reaches_capture_submission(monkeypatch, fake_llm):
+    http = TestClient(_stub_app(score_by_example={"e1": 1.0, "e2": 1.0}))
+    _patch_client(monkeypatch, http)
+
+    @praximetry.stage("plan_action")
+    def plan_action(text):
+        return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
+
+    result = runner.invoke(
+        cli_app,
+        ["eval", "--stage", "plan_action", "--scorer", "faithfulness", "--scorer", "toxicity"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert http.app.state.captures_seen[0]["scorers"] == ["faithfulness", "toxicity"]
+
+
+def test_eval_scorer_flag_overrides_config_file(monkeypatch, fake_llm, tmp_path):
+    http = TestClient(_stub_app(score_by_example={"e1": 1.0, "e2": 1.0}))
+    _patch_client(monkeypatch, http)
+
+    @praximetry.stage("plan_action")
+    def plan_action(text):
+        return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
+
+    cfg = tmp_path / "eval.json"
+    cfg.write_text('{"stage": "plan_action", "scorers": ["from_config"]}')
+
+    result = runner.invoke(cli_app, ["eval", "--config", str(cfg), "--scorer", "from_flag"])
+
+    assert result.exit_code == 0, result.output
+    assert http.app.state.captures_seen[0]["scorers"] == ["from_flag"]
+
+
+def test_eval_config_file_scorers_used_when_no_flag(monkeypatch, fake_llm, tmp_path):
+    http = TestClient(_stub_app(score_by_example={"e1": 1.0, "e2": 1.0}))
+    _patch_client(monkeypatch, http)
+
+    @praximetry.stage("plan_action")
+    def plan_action(text):
+        return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
+
+    cfg = tmp_path / "eval.json"
+    cfg.write_text('{"stage": "plan_action", "scorers": ["from_config"]}')
+
+    result = runner.invoke(cli_app, ["eval", "--config", str(cfg)])
+
+    assert result.exit_code == 0, result.output
+    assert http.app.state.captures_seen[0]["scorers"] == ["from_config"]
+
+
+def test_eval_config_file_empty_scorers_list_overrides_hosted_default(
+    monkeypatch, fake_llm, tmp_path
+):
+    http = TestClient(
+        _stub_app(
+            score_by_example={"e1": 1.0, "e2": 1.0},
+            eval_scorers={("proj", None): ["would_win_without_config"]},
+        )
+    )
+    _patch_client(monkeypatch, http)
+
+    @praximetry.stage("plan_action")
+    def plan_action(text):
+        return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
+
+    cfg = tmp_path / "eval.json"
+    cfg.write_text('{"stage": "plan_action", "scorers": []}')
+
+    result = runner.invoke(cli_app, ["eval", "--config", str(cfg)])
+
+    assert result.exit_code == 0, result.output
+    assert http.app.state.captures_seen[0]["scorers"] == []
+
+
+def test_eval_project_run_uses_hosted_config_scorers(monkeypatch, fake_llm):
+    http = TestClient(
+        _stub_app(
+            score_by_example={"e1": 1.0, "e2": 0.5},
+            examples=PROJECT_EXAMPLES,
+            eval_scorers={("proj", None): ["hosted_a", "hosted_b"]},
+        )
+    )
+    _patch_client(monkeypatch, http)
+    _register_project_stages(fake_llm)
+
+    result = runner.invoke(cli_app, ["eval", "--project", "proj", "--fail-under", "0.5"])
+
+    assert result.exit_code == 0, result.output
+    assert all(b["scorers"] == ["hosted_a", "hosted_b"] for b in http.app.state.captures_seen)
+
+
+def test_eval_no_args_default_run_uses_hosted_default_scorers(monkeypatch, fake_llm):
+    http = TestClient(
+        _stub_app(
+            score_by_example={"e1": 1.0, "e2": 1.0},
+            eval_default={"project": "proj", "stage": "plan_action"},
+            eval_scorers={("proj", "plan_action"): ["hosted_default_scorer"]},
+        )
+    )
+    _patch_client(monkeypatch, http)
+
+    @praximetry.stage("plan_action")
+    def plan_action(text):
+        return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
+
+    result = runner.invoke(cli_app, ["eval"])
+
+    assert result.exit_code == 0, result.output
+    assert http.app.state.captures_seen[0]["scorers"] == ["hosted_default_scorer"]
+
+
+def test_eval_no_scorer_anywhere_omits_the_field(monkeypatch, fake_llm):
+    http = TestClient(_stub_app(score_by_example={"e1": 1.0, "e2": 1.0}))
+    _patch_client(monkeypatch, http)
+
+    @praximetry.stage("plan_action")
+    def plan_action(text):
+        return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
+
+    result = runner.invoke(cli_app, ["eval", "--stage", "plan_action"])
+
+    assert result.exit_code == 0, result.output
+    assert "scorers" not in http.app.state.captures_seen[0]
