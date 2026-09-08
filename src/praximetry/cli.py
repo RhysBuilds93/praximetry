@@ -59,8 +59,14 @@ def eval_cmd(
     config: str = typer.Option(
         None,
         "--config",
-        help="Path to a JSON file with {project, stage, module, fail_under}; "
+        help="Path to a JSON file with {project, stage, module, fail_under, scorers}; "
         "explicit CLI flags override values in the file",
+    ),
+    scorer: list[str] = typer.Option(
+        None,
+        "--scorer",
+        help="Scorer(s) the cloud should use (repeatable); overrides --config "
+        "and the hosted project/stage default. Unset everywhere = server default.",
     ),
 ) -> None:
     """CI gate: capture the hosted golden corpus and have the cloud score it.
@@ -80,6 +86,11 @@ def eval_cmd(
     within a project. --config loads a JSON file; any of --stage/--project/-m/
     --fail-under given alongside override the file's values.
 
+    --scorer (repeatable) sets which scorers the cloud runs, resolved
+    explicit flag > --config "scorers" > hosted project/stage default >
+    unset (server default). The hosted tier needs a project; a bare --stage
+    run has no addressable hosted config, same as --fail-under.
+
     Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (default localhost).
     """
     import json
@@ -91,6 +102,7 @@ def eval_cmd(
     from .eval import CaptureError, capture_request
     from .eval.hosted import EXIT_GATE_FAILED, EXIT_OK, EXIT_UNUSABLE, CloudError, client_from_env
 
+    cfg: dict = {}
     if config:
         try:
             cfg = json.loads(Path(config).read_text())
@@ -105,6 +117,7 @@ def eval_cmd(
         module = module if module is not None else cfg.get("module")
         fail_under = fail_under if fail_under is not None else cfg.get("fail_under")
 
+    hosted_default_scorers: list[str] | None = None
     if not stage and not project:
         try:
             client = client_from_env()
@@ -122,6 +135,7 @@ def eval_cmd(
         stage = stage if stage is not None else default.get("stage")
         project = project if project is not None else default.get("project")
         fail_under = fail_under if fail_under is not None else default.get("fail_under")
+        hosted_default_scorers = default.get("scorers")
         console.print(
             f"using default: project={project}" + (f" stage={stage}" if stage else ""),
             markup=False,
@@ -157,10 +171,21 @@ def eval_cmd(
             console.print("No captures produced — nothing to evaluate.", soft_wrap=True)
             raise typer.Exit(EXIT_UNUSABLE)
 
+        if scorer:
+            scorers = list(scorer)
+        elif cfg.get("scorers") is not None:
+            scorers = list(cfg["scorers"])
+        elif hosted_default_scorers is not None:
+            scorers = hosted_default_scorers
+        elif project:
+            scorers = client.fetch_eval_config(project=project, stage=stage).get("scorers")
+        else:
+            scorers = None
+
         push_results: dict[str, dict] = {}
         for stage_name, caps in captures_by_stage.items():
             push_results[stage_name] = client.push_captures(
-                stage_name, caps, experiment_id=experiment_id
+                stage_name, caps, experiment_id=experiment_id, scorers=scorers
             )
             if project and not stage and push_results[stage_name].get("skipped"):
                 console.print(

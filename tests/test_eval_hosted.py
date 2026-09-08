@@ -278,6 +278,24 @@ def test_fetch_corpus_passes_project_and_source(stub):
     assert app.state.received["corpus_source"] == "expert"
 
 
+def test_push_captures_sends_scorers_when_given(stub):
+    app, http = stub
+    client = CloudClient("", VALID_KEY, client=http)
+
+    client.push_captures("plan_action", CAPTURES, scorers=["faithfulness", "toxicity"])
+
+    assert app.state.received["body"]["scorers"] == ["faithfulness", "toxicity"]
+
+
+def test_push_captures_omits_scorers_when_unset(stub):
+    app, http = stub
+    client = CloudClient("", VALID_KEY, client=http)
+
+    client.push_captures("plan_action", CAPTURES)
+
+    assert "scorers" not in app.state.received["body"]
+
+
 def test_push_captures_threads_experiment_id(stub):
     app, http = stub
     client = CloudClient("", VALID_KEY, client=http)
