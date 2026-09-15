@@ -91,7 +91,7 @@ def eval_cmd(
     unset (server default). The hosted tier needs a project; a bare --stage
     run has no addressable hosted config, same as --fail-under.
 
-    Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (default localhost).
+    Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (auto-discovered in Databricks, else required).
     """
     import json
     import uuid
@@ -284,7 +284,7 @@ def optimize(
     on a successful submission, non-zero if the gate couldn't run (no key,
     API unreachable, empty corpus, nothing capturable).
 
-    Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (default localhost).
+    Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (auto-discovered in Databricks, else required).
     """
     from rich.markup import escape
 
@@ -354,7 +354,7 @@ def apply(
     baseline); 1 = no completed optimize run exists yet for this stage; 2 =
     the gate could not run at all (no key, API unreachable).
 
-    Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (default localhost).
+    Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (auto-discovered in Databricks, else required).
     """
     import json
     import time
