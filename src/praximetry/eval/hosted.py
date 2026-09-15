@@ -17,6 +17,7 @@ already have, with no interactive flow to get stuck on in a pipeline.
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 
 import httpx
 
@@ -24,7 +25,9 @@ from ..models import Call, Run
 from .capture import CapturedRequest
 from .dataset import Dataset, Example
 
-DEFAULT_API_URL = "http://127.0.0.1:4646"
+# The bundle has shipped the dashboard app under both names at different
+# points; try both so a workspace on either doesn't need PRAXIMETRY_DATABRICKS_APP.
+DATABRICKS_APP_NAME_CANDIDATES = ("praximetry-dashboard", "praximetry-aimpoint-dashboard")
 
 # Exit codes. Distinct on purpose: a CI gate that can't tell "your quality
 # dropped" from "the gate never measured anything" is a gate you stop trusting.
@@ -230,6 +233,59 @@ class CloudClient:
         return resp.json()
 
 
+def _discover_databricks_url() -> str | None:
+    """Resolve the dashboard app's URL via the Databricks SDK, when running with
+    Databricks credentials available (notebook/job auth, a CLI profile, etc.).
+
+    Returns None (not an error) when the SDK isn't installed or no Databricks
+    auth is configured — that just means this resolver doesn't apply here.
+    Once real Databricks auth *is* available but the app can't be found,
+    that's a genuine misconfiguration and raises CloudError instead of
+    falling through to a confusing "URL not set".
+    """
+    try:
+        from databricks.sdk import WorkspaceClient
+        from databricks.sdk.errors import NotFound
+    except ImportError:
+        return None
+
+    try:
+        workspace = WorkspaceClient()
+    except Exception:
+        # No Databricks credentials in this environment (unified auth raises
+        # ValueError, among other things) — this resolver just isn't applicable.
+        return None
+
+    override = os.environ.get("PRAXIMETRY_DATABRICKS_APP")
+    candidates = (override,) if override else DATABRICKS_APP_NAME_CANDIDATES
+    for name in candidates:
+        try:
+            return workspace.apps.get(name=name).url
+        except NotFound:
+            continue
+
+    raise CloudError(
+        f"Databricks credentials found, but no app named {' or '.join(candidates)} exists in "
+        "this workspace. Set PRAXIMETRY_DATABRICKS_APP to the app's actual name, or set "
+        "PRAXIMETRY_API_URL directly to skip discovery."
+    )
+
+
+# Tried in order, after PRAXIMETRY_API_URL, until one returns a URL. Each
+# resolver owns its own lazy import and returns None when it doesn't apply
+# (wrong platform, package not installed, no credentials) rather than erroring.
+_URL_DISCOVERERS = (_discover_databricks_url,)
+
+
+@lru_cache(maxsize=1)
+def _discover_api_url() -> str | None:
+    for discover in _URL_DISCOVERERS:
+        url = discover()
+        if url:
+            return url
+    return None
+
+
 def client_from_env(client: httpx.Client | None = None) -> CloudClient:
     api_key = os.environ.get("PRAXIMETRY_API_KEY", "")
     if not api_key:
@@ -237,4 +293,10 @@ def client_from_env(client: httpx.Client | None = None) -> CloudClient:
             "PRAXIMETRY_API_KEY is not set. Issue a key from the dashboard and set it as an "
             "environment variable (in CI, a repository secret)."
         )
-    return CloudClient(os.environ.get("PRAXIMETRY_API_URL", DEFAULT_API_URL), api_key, client)
+    api_url = os.environ.get("PRAXIMETRY_API_URL") or _discover_api_url()
+    if not api_url:
+        raise CloudError(
+            "Could not determine the dashboard's URL. Set PRAXIMETRY_API_URL, or run where "
+            "Databricks credentials are available so it can be discovered automatically."
+        )
+    return CloudClient(api_url, api_key, client)

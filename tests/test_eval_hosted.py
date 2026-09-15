@@ -370,3 +370,123 @@ def test_client_from_env_requires_an_api_key(monkeypatch):
 
     with pytest.raises(CloudError, match="PRAXIMETRY_API_KEY"):
         client_from_env()
+
+
+def test_client_from_env_requires_an_api_url(monkeypatch):
+    monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
+    monkeypatch.delenv("PRAXIMETRY_API_URL", raising=False)
+
+    from praximetry.eval import hosted as hosted_mod
+
+    hosted_mod._discover_api_url.cache_clear()
+    monkeypatch.setattr(hosted_mod, "_discover_api_url", lambda: None)
+
+    with pytest.raises(CloudError, match="PRAXIMETRY_API_URL"):
+        hosted_mod.client_from_env()
+
+
+def test_discover_databricks_url_none_when_sdk_missing(monkeypatch):
+    import builtins
+
+    from praximetry.eval import hosted as hosted_mod
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name.startswith("databricks"):
+            raise ImportError("no databricks sdk in this environment")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    assert hosted_mod._discover_databricks_url() is None
+
+
+def test_discover_databricks_url_none_without_credentials(monkeypatch):
+    import databricks.sdk as db_sdk
+
+    from praximetry.eval import hosted as hosted_mod
+
+    def no_auth():
+        raise ValueError("cannot configure default credentials")
+
+    monkeypatch.setattr(db_sdk, "WorkspaceClient", no_auth)
+
+    assert hosted_mod._discover_databricks_url() is None
+
+
+def test_discover_databricks_url_finds_app_by_candidate_name(monkeypatch):
+    import databricks.sdk as db_sdk
+    from databricks.sdk.errors import NotFound
+
+    from praximetry.eval import hosted as hosted_mod
+
+    monkeypatch.delenv("PRAXIMETRY_DATABRICKS_APP", raising=False)
+
+    class FakeApps:
+        def get(self, name):
+            if name != "praximetry-aimpoint-dashboard":
+                raise NotFound(name)
+            return type("App", (), {"url": "https://found.aws.databricksapps.com"})()
+
+    monkeypatch.setattr(db_sdk, "WorkspaceClient", lambda: type("WC", (), {"apps": FakeApps()})())
+
+    assert hosted_mod._discover_databricks_url() == "https://found.aws.databricksapps.com"
+
+
+def test_discover_databricks_url_respects_app_name_override(monkeypatch):
+    import databricks.sdk as db_sdk
+    from databricks.sdk.errors import NotFound
+
+    from praximetry.eval import hosted as hosted_mod
+
+    monkeypatch.setenv("PRAXIMETRY_DATABRICKS_APP", "custom-app-name")
+
+    class FakeApps:
+        def get(self, name):
+            if name != "custom-app-name":
+                raise NotFound(name)
+            return type("App", (), {"url": "https://custom.aws.databricksapps.com"})()
+
+    monkeypatch.setattr(db_sdk, "WorkspaceClient", lambda: type("WC", (), {"apps": FakeApps()})())
+
+    assert hosted_mod._discover_databricks_url() == "https://custom.aws.databricksapps.com"
+
+
+def test_discover_databricks_url_raises_when_no_candidate_app_found(monkeypatch):
+    import databricks.sdk as db_sdk
+    from databricks.sdk.errors import NotFound
+
+    from praximetry.eval import hosted as hosted_mod
+
+    monkeypatch.delenv("PRAXIMETRY_DATABRICKS_APP", raising=False)
+
+    class FakeApps:
+        def get(self, name):
+            raise NotFound(name)
+
+    monkeypatch.setattr(db_sdk, "WorkspaceClient", lambda: type("WC", (), {"apps": FakeApps()})())
+
+    with pytest.raises(CloudError, match="PRAXIMETRY_DATABRICKS_APP"):
+        hosted_mod._discover_databricks_url()
+
+
+def test_discover_api_url_tries_resolvers_in_order_and_caches(monkeypatch):
+    from praximetry.eval import hosted as hosted_mod
+
+    hosted_mod._discover_api_url.cache_clear()
+    calls = []
+
+    def resolver_a():
+        calls.append("a")
+        return None
+
+    def resolver_b():
+        calls.append("b")
+        return "https://found.example.com"
+
+    monkeypatch.setattr(hosted_mod, "_URL_DISCOVERERS", (resolver_a, resolver_b))
+
+    assert hosted_mod._discover_api_url() == "https://found.example.com"
+    assert hosted_mod._discover_api_url() == "https://found.example.com"
+    assert calls == ["a", "b"]  # second call served from cache, resolvers not re-run
