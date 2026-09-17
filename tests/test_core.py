@@ -33,6 +33,21 @@ def test_pricing_known_and_prefix():
     assert pricing.cost_usd("mystery-model", 1000, 1000) == 0.0
 
 
+def test_is_unpriced_distinguishes_known_from_unknown_models():
+    assert pricing.is_unpriced("claude-sonnet-5") is False
+    assert pricing.is_unpriced("claude-haiku-4-5-20251001") is False  # prefix match
+    assert pricing.is_unpriced("mystery-model") is True
+
+
+def test_is_unpriced_true_for_a_registered_zero_cost_model():
+    pricing.register_pricing("internal-free-model", 0.0, 0.0)
+    try:
+        assert pricing.cost_usd("internal-free-model", 1000, 1000) == 0.0
+        assert pricing.is_unpriced("internal-free-model") is False
+    finally:
+        del pricing.PRICING["internal-free-model"]
+
+
 def test_cheaper_models_ladder():
     assert "claude-haiku-4-5" in pricing.cheaper_models("claude-sonnet-5")
     assert pricing.cheaper_models("gpt-4o") == ["gpt-4o-mini"]

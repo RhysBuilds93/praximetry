@@ -47,6 +47,16 @@ def test_sync_buffered_records_normalized_fields():
     assert c.cost_usd > 0
 
 
+def test_sync_buffered_flags_unrecognized_model_as_unpriced():
+    create = P._instrument(
+        lambda self, **k: _oai_resp("out", 5, 2), "openai", ADAPTERS["openai"], False
+    )
+    create(None, model="mystery-model-9000", messages=[{"role": "user", "content": "hi"}])
+    c = get_store().calls()[0]
+    assert c.cost_usd == 0.0
+    assert c.metadata["unpriced_model"] is True
+
+
 def test_sync_streaming_records_after_consumption():
     chunks = [
         NS(choices=[NS(delta=NS(content="he"))], usage=None),
