@@ -44,6 +44,11 @@ class ProviderSpec:
     targets: list[PatchTarget]
     adapter: OutputAdapter
     messages_key: str = "messages"
+    # Force `stream_options={"include_usage": True}` onto streaming calls so the
+    # response carries real usage instead of falling back to a chunk-count estimate
+    # (PRA-84). Only safe where we know the wire format -- not set for litellm,
+    # which fans out to arbitrary backends that may not support the option.
+    inject_stream_usage: bool = False
 
 
 def _openai_owner() -> tuple[Any, Any]:
@@ -79,6 +84,7 @@ PROVIDERS: list[ProviderSpec] = [
             PatchTarget(attr="create", is_async=True),
         ],
         adapter=ADAPTERS["openai"],
+        inject_stream_usage=True,
     ),
     ProviderSpec(
         name="anthropic",

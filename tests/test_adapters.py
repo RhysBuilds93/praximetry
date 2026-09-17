@@ -118,6 +118,26 @@ def test_openai_accumulate_and_finalize():
     assert out.tokens_in == 4 and out.tokens_out == 2
 
 
+def test_openai_accumulate_without_usage_leaves_tokens_out_honest():
+    # No chunk ever carries `usage` (the default unless the caller passes
+    # stream_options={"include_usage": True}) -- must not fabricate a token
+    # count from the number of chunks seen (PRA-84).
+    from types import SimpleNamespace as NS
+
+    adapter = OpenAIAdapter()
+    state: dict = {}
+    chunks = [
+        NS(choices=[NS(delta=NS(content="he", tool_calls=None))], usage=None),
+        NS(choices=[NS(delta=NS(content="llo", tool_calls=None))], usage=None),
+        NS(choices=[NS(delta=NS(content=" there", tool_calls=None))], usage=None),
+    ]
+    for chunk in chunks:
+        adapter.accumulate(chunk, state)
+    out = adapter.finalize_stream(state)
+    assert out.output_text == "hello there"
+    assert out.tokens_out == 0
+
+
 def test_openai_parse_response_reasoning_field():
     from types import SimpleNamespace as NS
 

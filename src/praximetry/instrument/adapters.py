@@ -98,7 +98,6 @@ class OpenAIAdapter(OutputAdapter):
         if choices:
             delta = _g(choices[0], "delta", "content", default="") or ""
             state["text"] += delta
-            state["tout"] = state.get("tout", 0) + (1 if delta else 0)
             reasoning_delta = (
                 _g(choices[0], "delta", "reasoning", default="")
                 or _g(choices[0], "delta", "reasoning_content", default="")

@@ -144,6 +144,7 @@ def _instrument(
     is_async: bool,
     messages_key: str = "messages",
     force_stream: bool = False,
+    inject_stream_usage: bool = False,
 ) -> Callable:
     """Build a patched create() wrapping `original` for one provider/sync-ness."""
     if is_async:
@@ -156,6 +157,8 @@ def _instrument(
                 return capture_hook.fn(capture_payload)
             t0 = time.perf_counter()
             if force_stream or kwargs.get("stream"):
+                if inject_stream_usage:
+                    kwargs.setdefault("stream_options", {"include_usage": True})
                 resp = await original(self, *args, **kwargs)
                 return AsyncStreamWrapper(
                     resp,
@@ -180,6 +183,8 @@ def _instrument(
             return capture_hook.fn(capture_payload)
         t0 = time.perf_counter()
         if force_stream or kwargs.get("stream"):
+            if inject_stream_usage:
+                kwargs.setdefault("stream_options", {"include_usage": True})
             resp = original(self, *args, **kwargs)
             return SyncStreamWrapper(
                 resp, adapter.accumulate, _make_stream_done(provider, model, messages, adapter, t0)
@@ -245,6 +250,7 @@ def _patch(spec: ProviderSpec) -> bool:
                 is_async=target.is_async,
                 messages_key=spec.messages_key,
                 force_stream=target.force_stream,
+                inject_stream_usage=spec.inject_stream_usage,
             )
             setattr(host, target.attr, _self_less_caller(inst, target.is_async))
         else:
@@ -255,6 +261,7 @@ def _patch(spec: ProviderSpec) -> bool:
                 is_async=target.is_async,
                 messages_key=spec.messages_key,
                 force_stream=target.force_stream,
+                inject_stream_usage=spec.inject_stream_usage,
             )
             setattr(host, target.attr, new)  # type: ignore[method-assign]
 

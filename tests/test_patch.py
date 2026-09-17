@@ -62,6 +62,48 @@ def test_sync_streaming_records_after_consumption():
     assert c.output_text == "hello" and c.input_tokens == 4 and c.output_tokens == 2
 
 
+def test_openai_streaming_injects_stream_options_for_real_usage():
+    # PRA-84: the openai spec is patched with inject_stream_usage=True, so a
+    # caller streaming without passing stream_options still gets real usage
+    # back instead of the (now-removed) chunk-count fallback.
+    seen_kwargs = {}
+
+    def original(self, **k):
+        seen_kwargs.update(k)
+        return iter(
+            [
+                NS(choices=[NS(delta=NS(content="hi"))], usage=None),
+                NS(choices=[], usage=NS(prompt_tokens=4, completion_tokens=2)),
+            ]
+        )
+
+    create = P._instrument(original, "openai", ADAPTERS["openai"], False, inject_stream_usage=True)
+    stream = create(None, model="gpt-4o", messages=[{"role": "user", "content": "hi"}], stream=True)
+    list(stream)
+    assert seen_kwargs["stream_options"] == {"include_usage": True}
+    c = get_store().calls()[0]
+    assert c.output_tokens == 2
+
+
+def test_openai_streaming_injection_does_not_clobber_caller_stream_options():
+    seen_kwargs = {}
+
+    def original(self, **k):
+        seen_kwargs.update(k)
+        return iter([NS(choices=[], usage=None)])
+
+    create = P._instrument(original, "openai", ADAPTERS["openai"], False, inject_stream_usage=True)
+    stream = create(
+        None,
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "hi"}],
+        stream=True,
+        stream_options={"include_usage": False},
+    )
+    list(stream)
+    assert seen_kwargs["stream_options"] == {"include_usage": False}
+
+
 def test_async_buffered_records():
     async def orig(self, **k):
         return _oai_resp("aout", 6, 3)
