@@ -87,6 +87,7 @@ def _apply_overrides(kwargs: dict[str, Any], messages_key: str) -> dict[str, Any
 def _record(
     provider: str, model: str, messages: list, out: NormalizedOutput, t0: float, error: str | None
 ) -> None:
+    metadata = {"unpriced_model": True} if pricing.is_unpriced(model) else {}
     record_call(
         provider=provider,
         model=model,
@@ -101,6 +102,7 @@ def _record(
         cost_usd=pricing.cost_usd(model, out.tokens_in, out.tokens_out),
         latency_ms=(time.perf_counter() - t0) * 1000,
         error=error,
+        metadata=metadata,
     )
 
 

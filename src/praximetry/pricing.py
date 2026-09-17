@@ -74,6 +74,16 @@ def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     return input_tokens * p[0] / 1e6 + output_tokens * p[1] / 1e6
 
 
+def is_unpriced(model: str) -> bool:
+    """True if `model` has no exact or prefix match in PRICING.
+
+    A resulting `cost_usd()` of 0.0 is otherwise ambiguous between a
+    genuinely free/zero-cost model and one we just have no pricing data
+    for (PRA-83). Callers use this to set `Call.metadata["unpriced_model"]`.
+    """
+    return _lookup(model) is None
+
+
 def cheaper_models(model: str) -> list[str]:
     for known, ladder in DOWNGRADE_LADDER.items():
         if model.startswith(known):

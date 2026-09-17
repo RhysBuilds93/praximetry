@@ -86,6 +86,9 @@ def map_span(name: str, attributes: dict[str, Any]) -> Call | None:
     output_text, reasoning_text = split_embedded_reasoning(
         str(_first(attributes, _COMPLETION, "")), model
     )
+    metadata: dict[str, Any] = {"source": "otel", "span": name}
+    if pricing.is_unpriced(model):
+        metadata["unpriced_model"] = True
     return Call(
         run_id=run.id if run else "otel",
         stage=stage,
@@ -97,7 +100,7 @@ def map_span(name: str, attributes: dict[str, Any]) -> Call | None:
         input_tokens=tin,
         output_tokens=tout,
         cost_usd=pricing.cost_usd(model, tin, tout),
-        metadata={"source": "otel", "span": name},
+        metadata=metadata,
     )
 
 
