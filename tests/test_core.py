@@ -16,6 +16,16 @@ def test_generated_ids_use_full_uuid_entropy():
     assert all(len(i) == 32 for i in ids)
 
 
+def test_call_rejects_unexpected_field():
+    import pytest
+    from pydantic import ValidationError
+
+    from praximetry.models import Call
+
+    with pytest.raises(ValidationError):
+        Call(run_id="r", response_text="typo for output_text")
+
+
 def test_hook_bound_restores_previous_on_exit():
     from praximetry._hooks import Hook
 
@@ -187,6 +197,29 @@ def test_calls_query_logs_when_truncated_at_limit(caplog):
     with caplog.at_level(logging.WARNING, logger="praximetry.store"):
         get_store().calls(limit=2)
     assert any("limit=2" in r.message for r in caplog.records)
+
+
+def test_ingest_writes_runs_calls_experiments_eval_results():
+    from praximetry.models import Call, EvalResult, Experiment, Run
+
+    payload = {
+        "runs": [Run(name="remote-run").model_dump()],
+        "calls": [Call(run_id="r1", provider="fake", model="gpt-4o").model_dump()],
+        "experiments": [Experiment(name="v1", stage="classify").model_dump()],
+        "eval_results": [EvalResult(example_id="ex1", scorer="exact").model_dump()],
+    }
+
+    counts = get_store().ingest(payload)
+
+    assert counts == {"runs": 1, "calls": 1, "experiments": 1, "eval_results": 1}
+    assert get_store().runs()[0].name == "remote-run"
+    assert get_store().calls()[0].model == "gpt-4o"
+    assert get_store().experiments()[0].name == "v1"
+    assert get_store().eval_results()[0].example_id == "ex1"
+
+
+def test_ingest_empty_payload_returns_zero_counts():
+    assert get_store().ingest({}) == {"runs": 0, "calls": 0, "experiments": 0, "eval_results": 0}
 
 
 def test_parent_call_id_chains_sequential_calls():

@@ -136,6 +136,16 @@ def policy_scope(stage: str):
         yield
 
 
+def reset_runtime() -> None:
+    """Testing hook: clear run/stage/call/override state left dangling by a
+    direct current_run()/override_context() call that skipped run_context()'s
+    own reset-on-exit."""
+    _current_run.set(None)
+    _stage_stack.set(())
+    _current_call.set(None)
+    _overrides.set(None)
+
+
 def record_call(call: Call | None = None, **kwargs: Any) -> Call:
     """Persist an LLM call. Used by patchers; also public for manual logging."""
     if not get_config().enabled:

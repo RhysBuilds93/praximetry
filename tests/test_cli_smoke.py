@@ -30,3 +30,18 @@ def test_summary_command():
     assert res.exit_code == 0
     assert "classify" in res.output and "claude-opus-4-8" in res.output
     assert "stage" in res.output and "cost" in res.output  # rich table header
+
+
+def test_doctor_command():
+    res = runner.invoke(app, ["doctor"])
+    assert res.exit_code == 0
+    assert "otel:" in res.output
+    assert "hosted:" in res.output
+
+
+def test_doctor_command_reports_hosted_env_state(monkeypatch):
+    monkeypatch.setenv("PRAXIMETRY_API_KEY", "secret")
+    monkeypatch.delenv("PRAXIMETRY_API_URL", raising=False)
+    res = runner.invoke(app, ["doctor"])
+    assert res.exit_code == 0
+    assert "api_key=set" in res.output
