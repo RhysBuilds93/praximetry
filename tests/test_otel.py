@@ -84,6 +84,40 @@ def test_map_span_splits_embedded_reasoning():
     assert call.reasoning_text == "thinking it through"
 
 
+def test_map_mlflow_span():
+    call = otel.map_span(
+        "predict",
+        {
+            "mlflow.spanType": "CHAT_MODEL",
+            "mlflow.llm.model": "gpt-4o",
+            "mlflow.llm.provider": "openai",
+            "mlflow.chat.tokenUsage": '{"input_tokens": 80, "output_tokens": 12, "total_tokens": 92}',
+        },
+    )
+    assert call.provider == "openai" and call.model == "gpt-4o"
+    assert call.input_tokens == 80 and call.output_tokens == 12
+    assert call.metadata["source"] == "otel"
+
+
+def test_mlflow_cost_overrides_pricing_table():
+    call = otel.map_span(
+        "predict",
+        {
+            "mlflow.llm.model": "gpt-4o",
+            "mlflow.llm.provider": "openai",
+            "mlflow.chat.tokenUsage": '{"input_tokens": 80, "output_tokens": 12}',
+            "mlflow.llm.cost": '{"input_cost": 0.001, "output_cost": 0.002, "total_cost": 0.003}',
+        },
+    )
+    assert call.cost_usd == 0.003
+    assert "unpriced_model" not in call.metadata
+
+
+def test_mlflow_span_type_alone_is_genai():
+    assert otel.is_genai_span({"mlflow.spanType": "LLM"})
+    assert not otel.is_genai_span({"mlflow.spanType": "CHAIN"})
+
+
 def test_non_llm_span_ignored():
     assert otel.map_span("http.request", {"http.method": "GET", "http.status_code": 200}) is None
 

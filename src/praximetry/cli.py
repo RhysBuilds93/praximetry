@@ -417,6 +417,59 @@ def apply(
 
 
 @app.command()
+def doctor() -> None:
+    """Report what praximetry can actually see in this environment.
+
+    Checks which LLM SDKs are installed and get patched by auto_instrument(),
+    whether opentelemetry-sdk is available for instrument_otel(), and whether
+    the hosted-tier env vars (API key/URL, Databricks auto-discovery) are set.
+    Makes no network calls.
+    """
+    import importlib.util
+    import os
+
+    from rich.table import Table
+
+    from .config import get_config
+    from .console import ACCENT, console
+    from .instrument.patch import auto_instrument
+    from .instrument.providers import PROVIDERS
+
+    cfg = get_config()
+    console.print(f"project={cfg.project}  db={cfg.db_path}  enabled={cfg.enabled}", markup=False)
+
+    patched = set(auto_instrument())
+    table = Table(title="SDK auto-instrumentation", show_edge=False, header_style=f"bold {ACCENT}")
+    table.add_column("provider")
+    table.add_column("status")
+    for spec in PROVIDERS:
+        if spec.name in patched:
+            status = "[success]patched[/success]"
+        else:
+            try:
+                spec.owner()
+                status = "[warn]installed, not patched[/warn]"
+            except ImportError:
+                status = "not installed"
+        table.add_row(spec.name, status)
+    console.print(table)
+
+    otel_installed = importlib.util.find_spec("opentelemetry.sdk") is not None
+    console.print(
+        f"otel: {'[success]available[/success]' if otel_installed else 'not installed'} "
+        "(opentelemetry-sdk, needed for instrument_otel())"
+    )
+
+    api_key_set = bool(os.environ.get("PRAXIMETRY_API_KEY"))
+    api_url_set = bool(os.environ.get("PRAXIMETRY_API_URL"))
+    databricks_installed = importlib.util.find_spec("databricks.sdk") is not None
+    console.print(
+        f"hosted: api_key={'set' if api_key_set else 'unset'} "
+        f"api_url={'set' if api_url_set else 'auto-discovery via databricks-sdk' if databricks_installed else 'unset, no databricks-sdk'}"
+    )
+
+
+@app.command()
 def summary() -> None:
     """Print usage totals and per-stage breakdown."""
     from rich.markup import escape

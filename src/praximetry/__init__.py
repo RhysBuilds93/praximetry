@@ -24,6 +24,7 @@ from .models import Call
 from .otel import instrument_otel, record_spans
 from .pricing import register_pricing
 from .runtime import current_run, record_call, run_context
+from .trulens import record_trulens_record
 
 __version__ = "0.1.1"
 __all__ = [
@@ -35,6 +36,7 @@ __all__ = [
     "register_pricing",
     "instrument_otel",
     "record_spans",
+    "record_trulens_record",
     "Call",
     "get_config",
     "CloudError",
