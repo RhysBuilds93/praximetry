@@ -78,6 +78,29 @@ def test_happy_path_pushes_run_and_calls(stub):
     assert body["calls"][0]["messages"] == [{"role": "user", "content": "hi"}]
 
 
+def test_flush_groups_calls_by_run_into_separate_pushes(stub):
+    app, http = stub
+    client = CloudClient("", VALID_KEY, client=http)
+    cloud_sync.start(client)
+
+    run_a, call_a = _make_run_and_call()
+    run_b, call_b = _make_run_and_call()
+    cloud_sync.note_run(run_a)
+    cloud_sync.note_run(run_b)
+    cloud_sync.enqueue(call_a)
+    cloud_sync.enqueue(call_b)
+    cloud_sync.flush_now()
+
+    traces = app.state.received["traces"]
+    assert len(traces) == 2
+    pushed_run_ids = {t["run"]["id"] for t in traces}
+    assert pushed_run_ids == {run_a.id, run_b.id}
+    for t in traces:
+        assert [c["id"] for c in t["calls"]] == [
+            call_a.id if t["run"]["id"] == run_a.id else call_b.id
+        ]
+
+
 def test_default_init_without_api_key_does_not_start_cloud_sync(monkeypatch):
     monkeypatch.delenv("PRAXIMETRY_API_KEY", raising=False)
 
