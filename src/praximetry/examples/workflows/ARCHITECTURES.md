@@ -152,3 +152,11 @@ the LLM directly before/alongside dispatching tools), and correctly parent
 their dispatched tool calls to themselves — no gather/join caveat.
 Covered by `praximetry-cloud`'s `tests/test_workflows_smoke.py` and
 `tests/test_network_graph_shapes.py`.
+
+## Swapping the model client
+
+Every workflow gets its model from `_real.chat_model(name)`. To run one
+against a fake, a replayed recording, or another provider, call
+`_real.set_chat_model_factory(factory)` before `handle(...)`; `factory(name)`
+returns an object with `invoke` and `bind_tools`. Pass `None` to restore the
+default `ChatOpenAI` client. See `tests/test_example_workflows.py`.
