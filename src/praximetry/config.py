@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+_FALSE = {"", "0", "false", "no", "off"}
+
 
 @dataclass
 class Config:
@@ -21,7 +23,7 @@ class Config:
             cfg.project = p
         if db := os.environ.get("PRAXIMETRY_DB"):
             cfg.db_path = Path(db)
-        if os.environ.get("PRAXIMETRY_DISABLED"):
+        if os.environ.get("PRAXIMETRY_DISABLED", "").strip().lower() not in _FALSE:
             cfg.enabled = False
         return cfg
 
