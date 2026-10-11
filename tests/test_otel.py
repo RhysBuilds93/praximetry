@@ -1,6 +1,6 @@
 """OpenTelemetry ingestion: attribute mapping across conventions + live spans."""
 
-from praximetry import otel
+from praximetry import otel, pricing
 from praximetry.store import get_store
 
 
@@ -116,6 +116,54 @@ def test_mlflow_cost_overrides_pricing_table():
 def test_mlflow_span_type_alone_is_genai():
     assert otel.is_genai_span({"mlflow.spanType": "LLM"})
     assert not otel.is_genai_span({"mlflow.spanType": "CHAIN"})
+
+
+def test_mlflow_malformed_token_usage_falls_back_to_zero():
+    call = otel.map_span(
+        "predict",
+        {
+            "mlflow.llm.model": "gpt-4o",
+            "mlflow.chat.tokenUsage": "not json",
+        },
+    )
+    assert call.input_tokens == 0 and call.output_tokens == 0
+
+
+def test_mlflow_malformed_cost_falls_back_to_pricing_table():
+    call = otel.map_span(
+        "predict",
+        {
+            "mlflow.llm.model": "gpt-4o",
+            "mlflow.chat.tokenUsage": '{"input_tokens": 80, "output_tokens": 12}',
+            "mlflow.llm.cost": "not json",
+        },
+    )
+    assert call.cost_usd == pricing.cost_usd("gpt-4o", 80, 12)
+
+
+def test_mlflow_cost_missing_total_cost_key_falls_back_to_pricing_table():
+    call = otel.map_span(
+        "predict",
+        {
+            "mlflow.llm.model": "gpt-4o",
+            "mlflow.chat.tokenUsage": '{"input_tokens": 80, "output_tokens": 12}',
+            "mlflow.llm.cost": '{"input_cost": 0.001, "output_cost": 0.002}',
+        },
+    )
+    assert call.cost_usd == pricing.cost_usd("gpt-4o", 80, 12)
+
+
+def test_gen_ai_tokens_take_precedence_over_mlflow_token_usage():
+    call = otel.map_span(
+        "predict",
+        {
+            "gen_ai.request.model": "gpt-4o",
+            "gen_ai.usage.input_tokens": 5,
+            "gen_ai.usage.output_tokens": 1,
+            "mlflow.chat.tokenUsage": '{"input_tokens": 80, "output_tokens": 12}',
+        },
+    )
+    assert call.input_tokens == 5 and call.output_tokens == 1
 
 
 def test_non_llm_span_ignored():

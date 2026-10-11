@@ -14,6 +14,57 @@ def test_providers_cover_all_four():
     assert {spec.name for spec in PROVIDERS} == {"openai", "anthropic", "litellm", "gemini"}
 
 
+# -- _apply_overrides ---------------------------------------------------------
+
+
+def test_apply_overrides_is_noop_without_an_active_override():
+    kwargs = {"model": "gpt-4o", "messages": [{"role": "user", "content": "hi"}]}
+    assert P._apply_overrides(dict(kwargs), "messages") == kwargs
+
+
+def test_apply_overrides_swaps_model():
+    from praximetry.runtime import override_context
+
+    with override_context(model="gpt-4o-mini"):
+        out = P._apply_overrides({"model": "gpt-4o"}, "messages")
+    assert out["model"] == "gpt-4o-mini"
+
+
+def test_apply_overrides_transforms_message_list():
+    from praximetry.runtime import override_context
+
+    def transform(messages):
+        return [{**m, "content": m["content"].upper()} for m in messages]
+
+    with override_context(prompt_transform=transform):
+        out = P._apply_overrides({"messages": [{"role": "user", "content": "hi"}]}, "messages")
+    assert out["messages"] == [{"role": "user", "content": "HI"}]
+
+
+def test_apply_overrides_also_transforms_anthropic_style_system_string():
+    from praximetry.runtime import override_context
+
+    def transform(messages):
+        return [{**m, "content": m["content"] + "!"} for m in messages]
+
+    with override_context(prompt_transform=transform):
+        out = P._apply_overrides(
+            {"messages": [{"role": "user", "content": "hi"}], "system": "be brief"}, "messages"
+        )
+    assert out["system"] == "be brief!"
+
+
+def test_apply_overrides_leaves_non_message_list_untouched():
+    from praximetry.runtime import override_context
+
+    def transform(messages):
+        raise AssertionError("should not be called")
+
+    with override_context(prompt_transform=transform):
+        out = P._apply_overrides({"messages": "not a list"}, "messages")
+    assert out["messages"] == "not a list"
+
+
 # -- patch application against REAL SDK classes -----------------------------
 
 

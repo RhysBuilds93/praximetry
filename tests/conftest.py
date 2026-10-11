@@ -21,9 +21,11 @@ def fresh_env(tmp_path, monkeypatch):
     config.set_config(cfg)
     reset_store()
     runtime.STAGE_REGISTRY.clear()
+    runtime.reset_runtime()
     cloud_sync.reset()
     yield
     cloud_sync.reset()
+    runtime.reset_runtime()
     reset_store()
 
 
