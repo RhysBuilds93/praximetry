@@ -5,6 +5,7 @@ hosted server lives in the closed-source cloud repo and does real scoring —
 out of scope here). This proves the CLI's capture -> push -> gate wiring.
 """
 
+import pytest
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
@@ -665,3 +666,49 @@ def test_eval_no_scorer_anywhere_omits_the_field(monkeypatch, fake_llm):
 
     assert result.exit_code == 0, result.output
     assert "scorers" not in http.app.state.captures_seen[0]
+
+
+def _use_stub(monkeypatch: pytest.MonkeyPatch, http: TestClient) -> None:
+    monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
+    import praximetry.eval.hosted as hosted_mod
+
+    monkeypatch.setattr(
+        hosted_mod,
+        "client_from_env",
+        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http),
+    )
+
+
+def test_eval_skips_and_counts_stage_level_examples(monkeypatch, fake_llm):
+    examples = [
+        {"id": "e1", "stage": "plan_action", "input": "track my order"},
+        {"id": "e2", "stage": "plan_action", "input": "cancel my order", "level": "stage"},
+        {"id": "e3", "stage": "plan_action", "input": "refund my order", "level": "stage"},
+    ]
+    stub = _stub_app(score_by_example={}, examples=examples)
+    _use_stub(monkeypatch, TestClient(stub))
+
+    @praximetry.stage("plan_action")
+    def plan_action(text):
+        return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
+
+    result = runner.invoke(cli_app, ["eval", "--stage", "plan_action"])
+
+    assert result.exit_code == 0, result.output
+    assert "skipped 2 stage-level example(s)" in result.output
+    assert "examples=1" in result.output
+    pushed = [c["example_id"] for body in stub.state.captures_seen for c in body["captures"]]
+    assert pushed == ["e1"]
+
+
+def test_eval_all_stage_level_corpus_is_unusable(monkeypatch):
+    examples = [{"id": "e1", "stage": "plan_action", "input": "x", "level": "stage"}]
+    stub = _stub_app(score_by_example={}, examples=examples)
+    _use_stub(monkeypatch, TestClient(stub))
+
+    result = runner.invoke(cli_app, ["eval", "--stage", "plan_action", "--fail-under", "0"])
+
+    assert result.exit_code == 2, result.output
+    assert "skipped 1 stage-level example(s)" in result.output
+    assert "nothing to evaluate" in result.output
+    assert stub.state.captures_seen == []
