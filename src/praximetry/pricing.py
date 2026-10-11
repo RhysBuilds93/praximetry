@@ -5,6 +5,8 @@ Prices as of mid-2026. Update via PRICING or register_pricing().
 
 from __future__ import annotations
 
+import re
+
 # (input $/MTok, output $/MTok)
 PRICING: dict[str, tuple[float, float]] = {
     # Anthropic
@@ -44,6 +46,7 @@ DOWNGRADE_LADDER: dict[str, list[str]] = {
     "claude-sonnet-4-6": ["claude-haiku-4-5"],
     "gpt-4o": ["gpt-4o-mini"],
     "gpt-4.1": ["gpt-4.1-mini", "gpt-4.1-nano"],
+    "gpt-4.1-mini": ["gpt-4.1-nano"],
     "o3": ["o4-mini"],
     "gemini-2.5-pro": ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
     "gemini-2.5-flash": ["gemini-2.5-flash-lite"],
@@ -56,15 +59,25 @@ def register_pricing(model: str, input_per_mtok: float, output_per_mtok: float) 
     PRICING[model] = (input_per_mtok, output_per_mtok)
 
 
+# Only a date or `@version` tail marks a snapshot of a known model; any other
+# tail (`-mini`, `-pro`, ...) is a different model with its own price.
+_SNAPSHOT_SUFFIX = re.compile(r"(-\d{8}|-\d{4}-\d{2}-\d{2}|@.+)")
+
+
+def _resolve(model: str, table: dict[str, object]) -> str | None:
+    if model in table:
+        return model
+    snapshots = [
+        known
+        for known in table
+        if model.startswith(known) and _SNAPSHOT_SUFFIX.fullmatch(model[len(known) :])
+    ]
+    return max(snapshots, key=len, default=None)
+
+
 def _lookup(model: str) -> tuple[float, float] | None:
-    if model in PRICING:
-        return PRICING[model]
-    # Dated snapshots like claude-haiku-4-5-20251001 -> longest prefix match.
-    best = None
-    for known in PRICING:
-        if model.startswith(known) and (best is None or len(known) > len(best)):
-            best = known
-    return PRICING[best] if best else None
+    known = _resolve(model, PRICING)
+    return PRICING[known] if known else None
 
 
 def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
@@ -85,7 +98,13 @@ def is_unpriced(model: str) -> bool:
 
 
 def cheaper_models(model: str) -> list[str]:
-    for known, ladder in DOWNGRADE_LADDER.items():
-        if model.startswith(known):
-            return ladder
-    return []
+    """Ladder alternatives priced below `model` on both input and output."""
+    known = _resolve(model, DOWNGRADE_LADDER)
+    current = _lookup(model)
+    if known is None or current is None:
+        return []
+    return [
+        alt
+        for alt in DOWNGRADE_LADDER[known]
+        if (p := _lookup(alt)) and p[0] < current[0] and p[1] < current[1]
+    ]
