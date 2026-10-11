@@ -162,11 +162,22 @@ def eval_cmd(
 
         experiment_id = str(uuid.uuid4())
         captures_by_stage: dict[str, list] = {}
+        stage_level_skipped = 0
         for ex in dataset.examples:
+            if ex.level == "stage":
+                stage_level_skipped += 1
+                continue
             try:
                 captures_by_stage.setdefault(ex.stage, []).append(capture_request(ex))
             except CaptureError as e:
                 console.print(f"  [SKIP] {ex.stage}/{ex.id}: {e}", markup=False, soft_wrap=True)
+        if stage_level_skipped:
+            console.print(
+                f"skipped {stage_level_skipped} stage-level example(s): "
+                "eval captures call-level only",
+                markup=False,
+                soft_wrap=True,
+            )
         if not any(captures_by_stage.values()):
             console.print("No captures produced — nothing to evaluate.", soft_wrap=True)
             raise typer.Exit(EXIT_UNUSABLE)

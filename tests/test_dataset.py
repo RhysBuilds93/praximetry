@@ -1,5 +1,10 @@
 """Dataset.load()'s JSONL parsing and the for_stage/stages helpers -- untested elsewhere."""
 
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
+
 from praximetry.eval.dataset import Dataset, Example
 
 
@@ -59,3 +64,28 @@ def test_stages_is_sorted_and_deduped():
     )
 
     assert ds.stages == ["classify", "summarize"]
+
+
+def test_level_defaults_to_call_for_old_payloads(tmp_path: Path) -> None:
+    path = tmp_path / "old.jsonl"
+    path.write_text('{"stage": "s", "input": "a"}\n')
+
+    assert Example(stage="s", input="a").level == "call"
+    assert Dataset.load(path).examples[0].level == "call"
+
+
+def test_level_round_trips_through_jsonl_and_payload(tmp_path: Path) -> None:
+    path = tmp_path / "levels.jsonl"
+    originals = [
+        Example(id="c", stage="s", input="a", level="call"),
+        Example(id="t", stage="s", input="b", level="stage"),
+    ]
+    path.write_text("\n".join(e.model_dump_json() for e in originals))
+
+    assert Dataset.load(path).examples == originals
+    assert [Example(**e.model_dump()).level for e in originals] == ["call", "stage"]
+
+
+def test_invalid_level_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        Example.model_validate({"stage": "s", "input": "a", "level": "trace"})

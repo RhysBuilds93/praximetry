@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +18,9 @@ class Example(BaseModel):
     stage: str
     input: Any
     expected: Any = None
+    # What `expected` describes: one LLM call's output, or the whole stage's return
+    # value. Capture is call-level only, so stage examples are never scored by it.
+    level: Literal["call", "stage"] = "call"
     scorer: str = "exact"
     threshold: float = 0.5
     # Optional human quality rating (1-5), for triaging the corpus by hand —
