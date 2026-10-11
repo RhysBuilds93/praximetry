@@ -6,6 +6,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -76,20 +77,38 @@ _TABLES: dict[str, list[tuple[str, str]]] = {
 }
 
 _INDEXES = [
-    "CREATE INDEX IF NOT EXISTS idx_calls_run ON calls(run_id);",
-    "CREATE INDEX IF NOT EXISTS idx_calls_stage ON calls(stage);",
+    "CREATE INDEX IF NOT EXISTS idx_calls_run ON calls(run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_calls_stage ON calls(stage)",
 ]
 
-_SCHEMA = (
-    "\n".join(
-        f"CREATE TABLE IF NOT EXISTS {table} ("
-        + ", ".join(f"{col} {type_}" for col, type_ in columns)
-        + ");"
-        for table, columns in _TABLES.items()
-    )
-    + "\n"
-    + "\n".join(_INDEXES)
-)
+_CREATE_TABLES = [
+    f"CREATE TABLE IF NOT EXISTS {table} ("
+    + ", ".join(f"{col} {type_}" for col, type_ in columns)
+    + ")"
+    for table, columns in _TABLES.items()
+]
+
+
+def _enable_wal(conn: sqlite3.Connection) -> None:
+    """Switching to WAL needs an exclusive lock that SQLite fails at immediately
+    instead of waiting on, so concurrent first opens retry until one wins."""
+    deadline = time.monotonic() + 5
+    while conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.01)
+
+
+def _present(r: sqlite3.Row, table: str) -> dict[str, Any]:
+    """Row as a dict of `_TABLES[table]` columns that are non-NULL.
+
+    Rows written before a column existed hold NULL there, and legacy columns from
+    older releases linger in the file; dropping both lets the model defaults apply.
+    """
+    return {col: r[col] for col, _ in _TABLES[table] if r[col] is not None}
 
 
 def _insert_sql(table: str) -> str:
@@ -121,9 +140,20 @@ class Store:
         self.db_path = Path(db_path) if db_path else get_config().db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
-        with self._conn() as c:
-            c.executescript(_SCHEMA)
+        c = self._conn()
+        # The write lock makes check-then-ALTER atomic across processes opening at once.
+        c.execute("BEGIN IMMEDIATE")
+        try:
+            for statement in _CREATE_TABLES:
+                c.execute(statement)
             self._migrate(c)
+            # After migration: an old table may lack the indexed column until now.
+            for statement in _INDEXES:
+                c.execute(statement)
+        except BaseException:
+            c.rollback()
+            raise
+        c.commit()
 
     @staticmethod
     def _migrate(c: sqlite3.Connection) -> None:
@@ -144,7 +174,7 @@ class Store:
         if conn is None:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
+            _enable_wal(conn)
             self._local.conn = conn
         return conn
 
@@ -242,8 +272,8 @@ class Store:
 
     @staticmethod
     def _row_to_run(r: sqlite3.Row) -> Run:
-        d = dict(r)
-        d["metadata"] = json.loads(d["metadata"] or "{}")
+        d = _present(r, "runs")
+        d["metadata"] = json.loads(d.get("metadata", "{}"))
         return Run(**d)
 
     def calls(
@@ -278,14 +308,11 @@ class Store:
 
     @staticmethod
     def _row_to_call(r: sqlite3.Row) -> Call:
-        d = dict(r)
-        d["messages"] = json.loads(d["messages"] or "[]")
-        d["tool_calls"] = json.loads(d["tool_calls"] or "[]")
-        d["structured_output"] = (
-            json.loads(d["structured_output"]) if d.get("structured_output") else None
-        )
-        d["content_parts"] = json.loads(d["content_parts"] or "[]")
-        d["metadata"] = json.loads(d["metadata"] or "{}")
+        d = _present(r, "calls")
+        for col in ("messages", "tool_calls", "content_parts", "metadata", "structured_output"):
+            if col in d:
+                d[col] = json.loads(d[col]) if d[col] else None
+        d = {k: v for k, v in d.items() if v is not None}
         return Call(**d)
 
     def stage_summary(self) -> list[dict[str, Any]]:
@@ -333,9 +360,9 @@ class Store:
         q += " ORDER BY created_at DESC"
         out = []
         for r in self._conn().execute(q, args).fetchall():
-            d = dict(r)
-            d["variant"] = json.loads(d["variant"] or "{}")
-            d["baseline"] = bool(d["baseline"])
+            d = _present(r, "experiments")
+            if "variant" in d:
+                d["variant"] = json.loads(d["variant"])
             out.append(Experiment(**d))
         return out
 
@@ -346,7 +373,7 @@ class Store:
             args.append(experiment_id)
         q += " ORDER BY ts DESC"
         rows = self._conn().execute(q, args).fetchall()
-        return [EvalResult(**{**dict(r), "passed": bool(r["passed"])}) for r in rows]
+        return [EvalResult(**_present(r, "eval_results")) for r in rows]
 
     # -- bulk ingest (used by the remote collector) ------------------------
     def ingest(self, payload: dict[str, Any]) -> dict[str, int]:
