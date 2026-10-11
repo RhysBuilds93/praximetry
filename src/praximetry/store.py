@@ -89,16 +89,21 @@ _CREATE_TABLES = [
 ]
 
 
-def _enable_wal(conn: sqlite3.Connection) -> None:
+def _enable_wal(conn: sqlite3.Connection, timeout: float = 5) -> None:
     """Switching to WAL needs an exclusive lock that SQLite fails at immediately
-    instead of waiting on, so concurrent first opens retry until one wins."""
-    deadline = time.monotonic() + 5
-    while conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+    instead of waiting on, so concurrent first opens retry while it's held. WAL is
+    an optimisation: any other outcome (`:memory:`, filesystems without WAL) or
+    running out of time just keeps the current journal mode."""
+    deadline = time.monotonic() + timeout
+    while True:
         try:
             conn.execute("PRAGMA journal_mode=WAL")
-        except sqlite3.OperationalError:
-            if time.monotonic() > deadline:
+            return
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e):
                 raise
+            if time.monotonic() > deadline:
+                return
             time.sleep(0.01)
 
 

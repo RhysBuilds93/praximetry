@@ -5,7 +5,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from praximetry.store import Store
+from praximetry.store import Store, _enable_wal
 
 _OLD_CALLS = (
     "CREATE TABLE calls (id TEXT PRIMARY KEY, run_id TEXT, stage TEXT, provider TEXT, "
@@ -81,3 +81,21 @@ def test_concurrent_opens_of_an_unmigrated_db(tmp_path: Path) -> None:
                 pool.apply_async(_open_when_ready, (db_path, start_at)) for _ in range(6)
             ]
             assert [r.get(timeout=60) for r in results] == ["ok"] * 6
+
+
+def test_in_memory_store_opens() -> None:
+    assert Store(":memory:").totals()["n"] == 0
+
+
+def test_enable_wal_gives_up_while_another_connection_holds_the_lock(tmp_path: Path) -> None:
+    db_path = tmp_path / "locked.db"
+    holder = sqlite3.connect(db_path, isolation_level=None)
+    holder.execute("BEGIN EXCLUSIVE")
+    contender = sqlite3.connect(db_path, timeout=0)
+
+    started = time.monotonic()
+    _enable_wal(contender, timeout=0.2)
+
+    assert time.monotonic() - started < 5
+    holder.execute("ROLLBACK")
+    assert contender.execute("PRAGMA journal_mode").fetchone()[0] != "wal"
