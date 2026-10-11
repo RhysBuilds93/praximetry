@@ -51,7 +51,10 @@ class SyncStreamWrapper:
     def _finish(self) -> None:
         if not self._done:
             self._done = True
-            self._on_done(self._state)
+            try:
+                self._on_done(self._state)
+            except Exception:  # recording must not break or mask the customer's stream
+                logger.warning("stream on_done failed", exc_info=True)
 
     def __enter__(self):
         if hasattr(self._stream, "__enter__"):
@@ -97,7 +100,10 @@ class AsyncStreamWrapper:
     def _finish(self) -> None:
         if not self._done:
             self._done = True
-            self._on_done(self._state)
+            try:
+                self._on_done(self._state)
+            except Exception:  # recording must not break or mask the customer's stream
+                logger.warning("stream on_done failed", exc_info=True)
 
     async def __aenter__(self):
         if hasattr(self._stream, "__aenter__"):

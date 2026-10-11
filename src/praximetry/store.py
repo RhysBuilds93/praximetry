@@ -92,6 +92,12 @@ _SCHEMA = (
 )
 
 
+def _json_default(obj: Any) -> Any:
+    """SDK content blocks (pydantic) in messages; anything else degrades to str."""
+    model_dump = getattr(obj, "model_dump", None)
+    return model_dump() if callable(model_dump) else str(obj)
+
+
 def _insert_sql(table: str) -> str:
     """`INSERT OR REPLACE` naming every column explicitly.
 
@@ -175,19 +181,19 @@ class Store:
                     call.stage,
                     call.provider,
                     call.model,
-                    json.dumps(call.messages),
+                    json.dumps(call.messages, default=_json_default),
                     call.output_text,
                     call.reasoning_text,
-                    json.dumps(call.tool_calls),
-                    json.dumps(call.structured_output),
-                    json.dumps(call.content_parts),
+                    json.dumps(call.tool_calls, default=_json_default),
+                    json.dumps(call.structured_output, default=_json_default),
+                    json.dumps(call.content_parts, default=_json_default),
                     call.input_tokens,
                     call.output_tokens,
                     call.cost_usd,
                     call.latency_ms,
                     call.ts,
                     call.error,
-                    json.dumps(call.metadata),
+                    json.dumps(call.metadata, default=_json_default),
                 ),
             )
 
