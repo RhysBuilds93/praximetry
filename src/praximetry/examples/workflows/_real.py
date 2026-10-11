@@ -16,11 +16,18 @@ workflow.
 Then either set PRAXIMETRY_EXAMPLE_MODEL (and PRAXIMETRY_EXAMPLE_PREMIUM_MODEL,
 where used) or edit the fallbacks below to a model id your AI_ENDPOINT
 actually serves -- there's no cross-provider default that works everywhere.
+
+To run a workflow against a different client (a fake in tests, a replayed
+recording, another provider), call `set_chat_model_factory(factory)` once
+before `handle(...)`. `factory` takes a model name and returns anything with
+the `ChatOpenAI` surface the workflows use (`invoke`, `bind_tools`); pass
+`None` to go back to the default.
 """
 
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 
 from langchain_core.messages import AIMessage
 from langchain_openai import ChatOpenAI
@@ -35,6 +42,14 @@ _DEFAULT_MODEL_FALLBACK = "gpt-4o-mini"
 _PREMIUM_MODEL_FALLBACK = "gpt-4o"
 
 
+_factory: Callable[[str], ChatOpenAI] | None = None
+
+
+def set_chat_model_factory(factory: Callable[[str], ChatOpenAI] | None) -> None:
+    global _factory
+    _factory = factory
+
+
 def default_model() -> str:
     return os.environ.get("PRAXIMETRY_EXAMPLE_MODEL", _DEFAULT_MODEL_FALLBACK)
 
@@ -44,6 +59,8 @@ def premium_model() -> str:
 
 
 def chat_model(name: str) -> ChatOpenAI:
+    if _factory is not None:
+        return _factory(name)
     return ChatOpenAI(
         model=name,
         base_url=os.environ.get("AI_ENDPOINT", "https://api.openai.com/v1"),
