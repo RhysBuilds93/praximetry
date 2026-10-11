@@ -59,9 +59,11 @@ def register_pricing(model: str, input_per_mtok: float, output_per_mtok: float) 
     PRICING[model] = (input_per_mtok, output_per_mtok)
 
 
-# Only a date or `@version` tail marks a snapshot of a known model; any other
-# tail (`-mini`, `-pro`, ...) is a different model with its own price.
-_SNAPSHOT_SUFFIX = re.compile(r"(-\d{8}|-\d{4}-\d{2}-\d{2}|@.+)")
+# Only a date, `@version`, `-latest` or `-preview[-date]` tail marks a snapshot
+# of a known model; any other tail (`-mini`, `-pro`, ...) is a different model.
+_SNAPSHOT_SUFFIX = re.compile(
+    r"(-\d{8}|-\d{4}-\d{2}-\d{2}|@.+|-latest|-preview(-\d{2}-\d{2}|-\d{4}-\d{2}-\d{2})?)"
+)
 
 
 def _resolve(model: str, table: dict[str, object]) -> str | None:

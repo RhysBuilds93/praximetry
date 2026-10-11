@@ -21,7 +21,9 @@ def test_register_pricing_overwrites_existing_model():
         pricing.PRICING["gpt-4o-mini"] = original
 
 
-@pytest.mark.parametrize("model", ["o3-mini", "o3-pro", "claude-sonnet-5-fast"])
+@pytest.mark.parametrize(
+    "model", ["o3-mini", "o3-pro", "claude-sonnet-5-fast", "gemini-2.5-flash-lite-mini"]
+)
 def test_distinct_models_sharing_a_prefix_are_unpriced(model: str):
     assert pricing.is_unpriced(model)
     assert pricing.cost_usd(model, 1_000_000, 1_000_000) == 0.0
@@ -37,6 +39,11 @@ def test_distinct_models_sharing_a_prefix_are_unpriced(model: str):
         ("claude-haiku-4-5-20251001", "claude-haiku-4-5"),
         ("claude-sonnet-4-5-20250929", "claude-sonnet-4-5"),
         ("gemini-2.5-flash-lite@001", "gemini-2.5-flash-lite"),
+        ("gemini-2.5-flash-preview", "gemini-2.5-flash"),
+        ("gemini-2.5-flash-preview-05-20", "gemini-2.5-flash"),
+        ("gemini-2.5-flash-preview-2025-05-20", "gemini-2.5-flash"),
+        ("gemini-2.5-flash-latest", "gemini-2.5-flash"),
+        ("gemini-2.5-flash-lite-preview-06-17", "gemini-2.5-flash-lite"),
     ],
 )
 def test_snapshot_resolves_to_most_specific_base(snapshot: str, base: str):
