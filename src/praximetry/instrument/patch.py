@@ -88,22 +88,25 @@ def _record(
     provider: str, model: str, messages: list, out: NormalizedOutput, t0: float, error: str | None
 ) -> None:
     metadata = {"unpriced_model": True} if pricing.is_unpriced(model) else {}
-    record_call(
-        provider=provider,
-        model=model,
-        messages=messages,
-        output_text=out.output_text,
-        reasoning_text=out.reasoning_text,
-        tool_calls=[tc.model_dump() for tc in out.tool_calls],
-        structured_output=out.structured_output,
-        content_parts=[cp.model_dump() for cp in out.content_parts],
-        input_tokens=out.tokens_in,
-        output_tokens=out.tokens_out,
-        cost_usd=pricing.cost_usd(model, out.tokens_in, out.tokens_out),
-        latency_ms=(time.perf_counter() - t0) * 1000,
-        error=error,
-        metadata=metadata,
-    )
+    try:
+        record_call(
+            provider=provider,
+            model=model,
+            messages=messages,
+            output_text=out.output_text,
+            reasoning_text=out.reasoning_text,
+            tool_calls=[tc.model_dump() for tc in out.tool_calls],
+            structured_output=out.structured_output,
+            content_parts=[cp.model_dump() for cp in out.content_parts],
+            input_tokens=out.tokens_in,
+            output_tokens=out.tokens_out,
+            cost_usd=pricing.cost_usd(model, out.tokens_in, out.tokens_out),
+            latency_ms=(time.perf_counter() - t0) * 1000,
+            error=error,
+            metadata=metadata,
+        )
+    except Exception:  # recording must never break or mask the customer's call
+        logger.warning("praximetry: failed to record %s call", provider, exc_info=True)
 
 
 def _make_stream_done(provider: str, model: str, messages: list, adapter, t0: float):
@@ -119,7 +122,12 @@ def _prepare_call(kwargs: dict[str, Any], messages_key: str, provider: str, adap
     """Shared pre-call setup for the sync/async create() wrappers: apply
     overrides and resolve model/messages/capture-hook-payload."""
     kwargs = _apply_overrides(kwargs, messages_key)
-    model, messages = kwargs.get("model", "unknown"), adapter.get_messages(kwargs)
+    model = kwargs.get("model", "unknown")
+    try:
+        messages = adapter.get_messages(kwargs)
+    except Exception:  # unrecognised kwargs shape: still make the call, just unrecorded
+        logger.warning("praximetry: could not read %s messages", provider, exc_info=True)
+        messages = []
     capture_payload = (
         {
             "provider": provider,
@@ -134,7 +142,11 @@ def _prepare_call(kwargs: dict[str, Any], messages_key: str, provider: str, adap
 
 
 def _finish_call(provider: str, model: str, messages: list, adapter, resp: Any, t0: float) -> Any:
-    out = adapter.parse_response(_unwrap_for_parsing(resp), model)
+    try:
+        out = adapter.parse_response(_unwrap_for_parsing(resp), model)
+    except Exception:  # the response is already paid for; hand it back untouched
+        logger.warning("praximetry: could not parse %s response", provider, exc_info=True)
+        return resp
     _record(provider, model, messages, out, t0, None)
     return resp
 

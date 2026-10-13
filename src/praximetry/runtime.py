@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import contextvars
+import logging
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from typing import Any, ContextManager
 from collections.abc import Callable
 
@@ -13,6 +14,8 @@ from ._hooks import Hook
 from .config import get_config
 from .models import Call, Run
 from .store import get_store
+
+logger = logging.getLogger(__name__)
 
 _current_run: contextvars.ContextVar[Run | None] = contextvars.ContextVar("run", default=None)
 _stage_stack: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
@@ -132,7 +135,11 @@ def policy_scope(stage: str):
     if policy_hook.fn is None:
         yield
         return
-    with policy_hook.fn(stage):
+    with ExitStack() as stack:
+        try:
+            stack.enter_context(policy_hook.fn(stage))
+        except Exception:  # a broken policy must not take down the customer's stage
+            logger.warning("praximetry: policy hook failed for stage %s", stage, exc_info=True)
         yield
 
 
