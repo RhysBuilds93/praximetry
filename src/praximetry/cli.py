@@ -392,7 +392,9 @@ def apply(
         )
         raise typer.Exit(1)
 
-    if not winner.get("model") and not winner.get("transforms"):
+    transforms = winner.get("transforms") or []
+    rewrite_only = transforms == ["llm_rewrite"] and not winner.get("rewritten_system_prompt")
+    if not winner.get("model") and (not transforms or rewrite_only):
         console.print(
             f"optimize run for stage '{stage}' completed but found no winner — nothing to apply.",
             markup=False,
@@ -410,7 +412,9 @@ def apply(
             stages = {}
     stages[stage] = {
         "model": winner.get("model"),
-        "transforms": winner.get("transforms") or [],
+        "transforms": transforms,
+        "rewritten_system_prompt": winner.get("rewritten_system_prompt"),
+        "original_system_prompt_hash": winner.get("original_system_prompt_hash"),
         "experiment_id": winner.get("experiment_id"),
         "savings_pct": winner.get("savings_pct"),
         "applied_at": time.time(),

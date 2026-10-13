@@ -255,6 +255,57 @@ def test_apply_no_winner_exits_zero_and_does_not_write(monkeypatch, tmp_path):
     assert not (tmp_path / ".praximetry" / "overrides.json").exists()
 
 
+def test_apply_round_trips_the_llm_rewrite_prompt_fields(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    http = TestClient(
+        _stub_app(
+            winner={
+                "stage": "checkout",
+                "model": None,
+                "transforms": ["llm_rewrite"],
+                "experiment_id": "exp1",
+                "savings_pct": 0.2,
+                "rewritten_system_prompt": "Be brief.",
+                "original_system_prompt_hash": "abc123",
+            }
+        )
+    )
+    _patch_client(monkeypatch, http)
+
+    result = runner.invoke(cli_app, ["apply", "--stage", "checkout"])
+
+    assert result.exit_code == 0, result.output
+    entry = json.loads((tmp_path / ".praximetry" / "overrides.json").read_text())["stages"][
+        "checkout"
+    ]
+    assert entry["rewritten_system_prompt"] == "Be brief."
+    assert entry["original_system_prompt_hash"] == "abc123"
+
+
+def test_apply_llm_rewrite_without_a_prompt_is_nothing_to_apply(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    http = TestClient(
+        _stub_app(
+            winner={
+                "stage": "checkout",
+                "model": None,
+                "transforms": ["llm_rewrite"],
+                "experiment_id": "exp1",
+                "savings_pct": 0.2,
+                "rewritten_system_prompt": None,
+                "original_system_prompt_hash": None,
+            }
+        )
+    )
+    _patch_client(monkeypatch, http)
+
+    result = runner.invoke(cli_app, ["apply", "--stage", "checkout"])
+
+    assert result.exit_code == 0, result.output
+    assert "nothing to apply" in result.output
+    assert not (tmp_path / ".praximetry" / "overrides.json").exists()
+
+
 def test_apply_no_run_yet_is_an_error(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     http = TestClient(_stub_app(winner="missing"))
