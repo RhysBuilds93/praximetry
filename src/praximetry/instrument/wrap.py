@@ -42,19 +42,33 @@ class SyncStreamWrapper:
         except StopIteration:
             self._finish()
             raise
+        except Exception as exc:
+            self._finish(str(exc))
+            raise
         try:
             self._accumulate(chunk, self._state)
         except Exception:  # never let instrumentation break a stream
             logger.debug("stream accumulate failed", exc_info=True)
         return chunk
 
-    def _finish(self) -> None:
+
+    def _finish(self, error: str | None = None) -> None:
         if not self._done:
             self._done = True
+            if error is not None:
+                self._state["error"] = error
             try:
                 self._on_done(self._state)
             except Exception:  # recording must not break or mask the customer's stream
                 logger.warning("stream on_done failed", exc_info=True)
+
+
+    def close(self) -> Any:
+        self._finish()
+        if hasattr(self._stream, "close"):
+            return self._stream.close()
+        return None
+
 
     def __enter__(self):
         if hasattr(self._stream, "__enter__"):
@@ -62,10 +76,11 @@ class SyncStreamWrapper:
         return self
 
     def __exit__(self, *exc: Any):
-        self._finish()
+        self._finish(str(exc[1]) if len(exc) > 1 and exc[1] is not None else None)
         if hasattr(self._stream, "__exit__"):
             return self._stream.__exit__(*exc)
         return False
+
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)
@@ -91,19 +106,32 @@ class AsyncStreamWrapper:
         except StopAsyncIteration:
             self._finish()
             raise
+        except Exception as exc:
+            self._finish(str(exc))
+            raise
         try:
             self._accumulate(chunk, self._state)
         except Exception:  # never let instrumentation break a stream
             logger.debug("stream accumulate failed", exc_info=True)
         return chunk
 
-    def _finish(self) -> None:
+
+    def _finish(self, error: str | None = None) -> None:
         if not self._done:
             self._done = True
+            if error is not None:
+                self._state["error"] = error
             try:
                 self._on_done(self._state)
             except Exception:  # recording must not break or mask the customer's stream
                 logger.warning("stream on_done failed", exc_info=True)
+
+    async def aclose(self) -> Any:
+        self._finish()
+        if hasattr(self._stream, "aclose"):
+            return await self._stream.aclose()
+        return None
+
 
     async def __aenter__(self):
         if hasattr(self._stream, "__aenter__"):
@@ -111,10 +139,11 @@ class AsyncStreamWrapper:
         return self
 
     async def __aexit__(self, *exc: Any):
-        self._finish()
+        self._finish(str(exc[1]) if len(exc) > 1 and exc[1] is not None else None)
         if hasattr(self._stream, "__aexit__"):
             return await self._stream.__aexit__(*exc)
         return False
+
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._stream, name)

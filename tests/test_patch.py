@@ -122,6 +122,37 @@ def test_sync_streaming_records_after_consumption():
     c = get_store().calls()[0]
     assert c.output_text == "hello" and c.input_tokens == 4 and c.output_tokens == 2
 
+def test_sync_stream_close_and_iteration_error_record_partial_output():
+    class Stream:
+        def __init__(self):
+            self.chunks = iter(
+                [
+                    NS(choices=[NS(delta=NS(content="partial"))], usage=None),
+                ]
+            )
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            try:
+                return next(self.chunks)
+            except StopIteration:
+                raise RuntimeError("iteration failed")
+
+        def close(self):
+            self.closed = True
+
+    stream = P._instrument(lambda self, **k: Stream(), "openai", ADAPTERS["openai"], False)(
+        None, model="gpt-4o", messages=[], stream=True
+    )
+    next(stream)
+    stream.close()
+    assert get_store().calls()[0].output_text == "partial"
+    assert stream._stream.closed
+
+
+
 
 def test_openai_streaming_injects_stream_options_for_real_usage():
     # PRA-84: the openai spec is patched with inject_stream_usage=True, so a
