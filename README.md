@@ -51,6 +51,10 @@ local storage, cost calculation, and the `praximetry eval` CI-gate command
 locally). Auto-optimization and the hosted dashboard are a separate product —
 see [praximetry.io](https://praximetry.io).
 
+`praximetry optimize` and `praximetry apply` operate on the configured project
+(`PRAXIMETRY_PROJECT`, default `default`). Pass `--project` to target another
+project when a stage name exists in more than one.
+
 SQLite store paths are anchored when the store is created, so later working-directory changes do
 not redirect connections opened by worker threads.
 

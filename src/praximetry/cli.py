@@ -310,6 +310,9 @@ def optimize(
         0.02, "--quality-tolerance", help="Max quality drop from baseline still considered a win"
     ),
     max_trials: int = typer.Option(8, "--max-trials", help="Trial budget for the hosted run"),
+    project: str = typer.Option(
+        None, "--project", help="Project (defaults to the configured PRAXIMETRY_PROJECT)"
+    ),
 ) -> None:
     """Trigger a hosted optimization run for `stage`.
 
@@ -324,6 +327,7 @@ def optimize(
     """
     from rich.markup import escape
 
+    from .config import get_config
     from .console import console
     from .eval import CaptureError, capture_request
     from .eval.hosted import CloudError, client_from_env
@@ -331,9 +335,14 @@ def optimize(
     try:
         client = client_from_env()
         _import_module(module)
-        dataset = client.fetch_corpus(stage)
+        selected_project = project if project is not None else get_config().project
+        dataset = client.fetch_corpus(stage, project=selected_project)
         if not dataset.examples:
-            console.print(f"No golden examples for stage '{stage}'.", markup=False, soft_wrap=True)
+            console.print(
+                f"No golden examples for stage '{stage}' in project '{selected_project}'.",
+                markup=False,
+                soft_wrap=True,
+            )
             raise typer.Exit(1)
 
         try:
@@ -349,6 +358,7 @@ def optimize(
             transforms=transform or (),
             quality_tolerance=quality_tolerance,
             max_trials=max_trials,
+            project=selected_project,
         )
     except CloudError as e:
         console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
@@ -381,6 +391,9 @@ def optimize(
 @app.command()
 def apply(
     stage: str = typer.Option(..., "--stage", help="Stage to apply the hosted optimize winner for"),
+    project: str = typer.Option(
+        None, "--project", help="Project (defaults to the configured PRAXIMETRY_PROJECT)"
+    ),
 ) -> None:
     """Fetch the winning policy from a completed `optimize` run and write it
     locally to .praximetry/overrides.json.
@@ -399,18 +412,20 @@ def apply(
     from rich.markup import escape
 
     from .console import console
+    from .config import get_config
     from .eval.hosted import CloudError, client_from_env
 
     try:
         client = client_from_env()
-        winner = client.fetch_winner(stage)
+        selected_project = project if project is not None else get_config().project
+        winner = client.fetch_winner(stage, project=selected_project)
     except CloudError as e:
         console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
         raise typer.Exit(2) from e
 
     if winner is None:
         console.print(
-            f"no optimize run found for stage '{stage}' — run "
+            f"no optimize run found for stage '{stage}' in project '{selected_project}' — run "
             f"`praximetry optimize --stage {stage} -m your_module` first",
             markup=False,
             soft_wrap=True,
