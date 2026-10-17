@@ -109,13 +109,16 @@ def _record(
         logger.warning("praximetry: failed to record %s call", provider, exc_info=True)
 
 
+
 def _make_stream_done(provider: str, model: str, messages: list, adapter, t0: float):
     def on_done(state: dict[str, Any]) -> None:
         state["model"] = model
         out = adapter.finalize_stream(state)
-        _record(provider, model, messages, out, t0, None)
+        _record(provider, model, messages, out, t0, state.get("error"))
 
     return on_done
+
+
 
 
 def _prepare_call(kwargs: dict[str, Any], messages_key: str, provider: str, adapter):
@@ -173,12 +176,18 @@ def _instrument(
             if force_stream or kwargs.get("stream"):
                 if inject_stream_usage:
                     kwargs.setdefault("stream_options", {"include_usage": True})
-                resp = await original(self, *args, **kwargs)
+                try:
+                    resp = await original(self, *args, **kwargs)
+                except Exception as e:  # noqa: BLE001
+                    _record(provider, model, messages, NormalizedOutput(), t0, str(e))
+                    raise
                 return AsyncStreamWrapper(
                     resp,
                     adapter.accumulate,
                     _make_stream_done(provider, model, messages, adapter, t0),
                 )
+
+
             try:
                 resp = await original(self, *args, **kwargs)
             except Exception as e:  # noqa: BLE001
@@ -199,10 +208,16 @@ def _instrument(
         if force_stream or kwargs.get("stream"):
             if inject_stream_usage:
                 kwargs.setdefault("stream_options", {"include_usage": True})
-            resp = original(self, *args, **kwargs)
+            try:
+                resp = original(self, *args, **kwargs)
+            except Exception as e:  # noqa: BLE001
+                _record(provider, model, messages, NormalizedOutput(), t0, str(e))
+                raise
             return SyncStreamWrapper(
                 resp, adapter.accumulate, _make_stream_done(provider, model, messages, adapter, t0)
             )
+
+
         try:
             resp = original(self, *args, **kwargs)
         except Exception as e:  # noqa: BLE001
