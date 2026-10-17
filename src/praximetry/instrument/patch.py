@@ -111,11 +111,13 @@ def _record(
 
 
 def _make_stream_done(provider: str, model: str, messages: list, adapter, t0: float):
+    def on_done(state: dict[str, Any]) -> None:
         state["model"] = model
         out = adapter.finalize_stream(state)
         _record(provider, model, messages, out, t0, state.get("error"))
 
     return on_done
+
 
 
 
