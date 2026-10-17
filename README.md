@@ -39,8 +39,9 @@ pip install praximetry
 `praximetry` doesn't require openai/anthropic/etc. to be installed — the
 per-provider patchers import lazily, so `init()` only instruments what's
 actually present. For manual instrumentation (or providers without a patcher),
-call `px.record_call(...)` directly inside a `@px.stage`
-function.
+call `px.record_call(...)` directly inside a `@px.stage` function. LiteLLM's
+`completion` entry point supports positional `model` and `messages` arguments,
+including when an active model override is applied.
 
 ## What this is (and isn't)
 
