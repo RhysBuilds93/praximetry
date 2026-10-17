@@ -43,6 +43,11 @@ call `px.record_call(...)` directly inside a `@px.stage` function. LiteLLM's
 `completion` entry point supports positional `model` and `messages` arguments,
 including when an active model override is applied.
 
+Patching is atomic per provider: if an SDK target is missing or cannot be
+replaced, its other targets keep their original methods. Repeated
+instrumentation leaves existing wrappers in place, so a completion is recorded
+once even after an instrumentation retry.
+
 ## What this is (and isn't)
 
 This package is the open-source recording/observability layer: instrumentation,
