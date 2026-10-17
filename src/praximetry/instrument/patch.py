@@ -109,12 +109,14 @@ def _record(
         logger.warning("praximetry: failed to record %s call", provider, exc_info=True)
 
 
+
+def _make_stream_done(provider: str, model: str, messages: list, adapter, t0: float):
     def on_done(state: dict[str, Any]) -> None:
-        state["model"] = model
         out = adapter.finalize_stream(state)
         _record(provider, model, messages, out, t0, state.get("error"))
 
     return on_done
+
 
 
 def _prepare_call(kwargs: dict[str, Any], messages_key: str, provider: str, adapter):
