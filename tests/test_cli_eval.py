@@ -712,3 +712,68 @@ def test_eval_all_stage_level_corpus_is_unusable(monkeypatch):
     assert "skipped 1 stage-level example(s)" in result.output
     assert "nothing to evaluate" in result.output
     assert stub.state.captures_seen == []
+
+
+def test_eval_unreachable_api_is_unusable(monkeypatch):
+    import httpx
+    import praximetry.eval.hosted as hosted_mod
+
+    monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
+
+    def unreachable(client=None):
+        request = httpx.Request("GET", "https://example.invalid")
+        raise httpx.ConnectError("offline", request=request)
+
+    monkeypatch.setattr(hosted_mod, "client_from_env", unreachable)
+    result = runner.invoke(cli_app, ["eval", "--stage", "plan_action"])
+
+    assert result.exit_code == 2, result.output
+    assert "offline" in result.output
+
+
+def test_eval_bad_module_is_unusable(monkeypatch):
+    http = TestClient(_stub_app(score_by_example={}))
+    _use_stub(monkeypatch, http)
+
+    result = runner.invoke(
+        cli_app, ["eval", "--stage", "plan_action", "--module", "missing_eval_test_module"]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "missing_eval_test_module" in result.output
+    assert http.app.state.captures_seen == []
+
+
+def test_eval_stage_exception_is_unusable(monkeypatch):
+    examples = [{"id": "e1", "stage": "failing_stage", "input": "x"}]
+    http = TestClient(_stub_app(score_by_example={}, examples=examples))
+    _use_stub(monkeypatch, http)
+
+    @praximetry.stage("failing_stage")
+    def failing_stage(text):
+        raise ValueError("stage failed")
+
+    result = runner.invoke(cli_app, ["eval", "--stage", "failing_stage"])
+
+    assert result.exit_code == 2, result.output
+    assert "stage failed" in result.output
+    assert http.app.state.captures_seen == []
+
+
+def test_eval_non_numeric_threshold_from_config_is_unusable(monkeypatch, fake_llm, tmp_path):
+    http = TestClient(_stub_app(score_by_example={"e1": 1.0, "e2": 1.0}))
+    _use_stub(monkeypatch, http)
+    config_path = tmp_path / "eval.json"
+    config_path.write_text(
+        '{"stage": "plan_action", "fail_under": "not-a-number"}',
+        encoding="utf-8",
+    )
+
+    @praximetry.stage("plan_action")
+    def plan_action(text):
+        return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
+
+    result = runner.invoke(cli_app, ["eval", "--config", str(config_path)])
+
+    assert result.exit_code == 2, result.output
+    assert "fail_under must be a number" in result.output

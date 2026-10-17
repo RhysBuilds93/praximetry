@@ -83,6 +83,20 @@ def _apply_overrides(kwargs: dict[str, Any], messages_key: str) -> dict[str, Any
             ]
     return kwargs
 
+def _normalize_self_less_args(
+    args: tuple[Any, ...], kwargs: dict[str, Any], messages_key: str
+) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Expose positional model/messages to instrumentation before calling a module API."""
+    if not args or "model" in kwargs:
+        return args, kwargs
+    kwargs = dict(kwargs)
+    kwargs["model"] = args[0]
+    args = args[1:]
+    if args and messages_key not in kwargs:
+        kwargs[messages_key] = args[0]
+        args = args[1:]
+    return args, kwargs
+
 
 def _record(
     provider: str, model: str, messages: list, out: NormalizedOutput, t0: float, error: str | None
@@ -159,11 +173,14 @@ def _instrument(
     messages_key: str = "messages",
     force_stream: bool = False,
     inject_stream_usage: bool = False,
+    self_less: bool = False,
 ) -> Callable:
     """Build a patched create() wrapping `original` for one provider/sync-ness."""
     if is_async:
 
         async def acreate(self: Any, *args: Any, **kwargs: Any) -> Any:
+            if self_less:
+                args, kwargs = _normalize_self_less_args(args, kwargs, messages_key)
             kwargs, model, messages, capture_payload = _prepare_call(
                 kwargs, messages_key, provider, adapter
             )
@@ -190,6 +207,8 @@ def _instrument(
         return acreate
 
     def create(self: Any, *args: Any, **kwargs: Any) -> Any:
+        if self_less:
+            args, kwargs = _normalize_self_less_args(args, kwargs, messages_key)
         kwargs, model, messages, capture_payload = _prepare_call(
             kwargs, messages_key, provider, adapter
         )
@@ -265,6 +284,7 @@ def _patch(spec: ProviderSpec) -> bool:
                 messages_key=spec.messages_key,
                 force_stream=target.force_stream,
                 inject_stream_usage=spec.inject_stream_usage,
+                self_less=target.self_less,
             )
             setattr(host, target.attr, _self_less_caller(inst, target.is_async))
         else:

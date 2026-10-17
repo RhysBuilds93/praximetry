@@ -6,7 +6,7 @@ from types import SimpleNamespace as NS
 
 from praximetry.instrument import patch as P
 from praximetry.instrument.adapters import ADAPTERS
-from praximetry.instrument.providers import PROVIDERS
+from praximetry.instrument.providers import PROVIDERS, PatchTarget, ProviderSpec
 from praximetry.store import get_store
 
 
@@ -85,6 +85,49 @@ def _oai_resp(text, tin, tout):
     return NS(
         choices=[NS(message=NS(content=text))], usage=NS(prompt_tokens=tin, completion_tokens=tout)
     )
+
+
+def _patched_litellm(monkeypatch):
+    seen = []
+
+    def completion(model, messages=None, **kwargs):
+        seen.append((model, messages, kwargs))
+        return _oai_resp("out", 5, 2)
+
+    host = NS(completion=completion)
+    spec = ProviderSpec(
+        name="litellm",
+        owner=lambda: (host, host),
+        targets=[PatchTarget("completion", self_less=True)],
+        adapter=ADAPTERS["litellm"],
+    )
+    monkeypatch.setattr(P, "_patched", set())
+    assert P._patch(spec)
+    return host, seen
+
+
+def test_litellm_positional_call_is_recorded(monkeypatch):
+    host, seen = _patched_litellm(monkeypatch)
+    messages = [{"role": "user", "content": "hi"}]
+
+    host.completion("gpt-4o", messages)
+
+    assert seen == [("gpt-4o", messages, {})]
+    call = get_store().calls()[0]
+    assert call.model == "gpt-4o"
+    assert call.messages == messages
+
+
+def test_litellm_positional_call_accepts_model_override(monkeypatch):
+    from praximetry.runtime import override_context
+
+    host, seen = _patched_litellm(monkeypatch)
+    messages = [{"role": "user", "content": "hi"}]
+
+    with override_context(model="gpt-4o-mini"):
+        host.completion("gpt-4o", messages)
+
+    assert seen == [("gpt-4o-mini", messages, {})]
 
 
 def test_sync_buffered_records_normalized_fields():
