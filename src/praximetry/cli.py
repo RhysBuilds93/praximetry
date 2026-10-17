@@ -448,6 +448,11 @@ def apply(
 
     savings = winner.get("savings_pct")
     savings_str = f" savings={savings:.0%}" if savings is not None else ""
+    if winner.get("baseline_is_stand_in"):
+        console.print(
+            "Savings are measured against a stand-in model, not your observed model.",
+            soft_wrap=True,
+        )
     console.print(
         f"[success]applied[/success] stage='{escape(stage)}' model={escape(str(winner.get('model')))} "
         f"transforms={escape(str(winner.get('transforms') or []))}{savings_str} -> {path}",

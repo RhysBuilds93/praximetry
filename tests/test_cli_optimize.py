@@ -216,6 +216,28 @@ def test_apply_writes_the_winner_to_overrides_json(monkeypatch, tmp_path):
     assert overrides["stages"]["checkout"]["savings_pct"] == 0.34
 
 
+def test_apply_warns_when_savings_use_a_stand_in_baseline(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    http = TestClient(
+        _stub_app(
+            winner={
+                "stage": "checkout",
+                "model": "amazon.nova-pro-v1:0",
+                "transforms": [],
+                "experiment_id": "exp1",
+                "savings_pct": 0.34,
+                "baseline_is_stand_in": True,
+            }
+        )
+    )
+    _patch_client(monkeypatch, http)
+
+    result = runner.invoke(cli_app, ["apply", "--stage", "checkout"])
+
+    assert result.exit_code == 0, result.output
+    assert "Savings are measured against a stand-in model" in result.output
+
+
 def test_apply_preserves_other_stages_in_overrides_json(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".praximetry").mkdir()
