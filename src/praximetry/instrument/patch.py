@@ -268,11 +268,13 @@ def _self_less_caller(inst: Callable, is_async: bool) -> Callable:
         async def acall(*a: Any, **k: Any) -> Any:
             return await inst(None, *a, **k)
 
+        acall._praximetry_patched = True  # type: ignore[attr-defined]
         return acall
 
     def call(*a: Any, **k: Any) -> Any:
         return inst(None, *a, **k)
 
+    call._praximetry_patched = True  # type: ignore[attr-defined]
     return call
 
 
@@ -285,34 +287,37 @@ def _patch(spec: ProviderSpec) -> bool:
     except ImportError:
         return False
 
+    replacements = []
     for target in spec.targets:
         host = async_host if target.is_async else sync_host
         if target.optional and not hasattr(host, target.attr):
             continue
         original = getattr(host, target.attr)
+        if getattr(original, "_praximetry_patched", False):
+            continue
+        wrapped = _instrument(
+            _self_less(original) if target.self_less else original,
+            spec.name,
+            spec.adapter,
+            is_async=target.is_async,
+            messages_key=spec.messages_key,
+            force_stream=target.force_stream,
+            inject_stream_usage=spec.inject_stream_usage,
+            self_less=target.self_less,
+        )
         if target.self_less:
-            inst = _instrument(
-                _self_less(original),
-                spec.name,
-                spec.adapter,
-                is_async=target.is_async,
-                messages_key=spec.messages_key,
-                force_stream=target.force_stream,
-                inject_stream_usage=spec.inject_stream_usage,
-                self_less=target.self_less,
-            )
-            setattr(host, target.attr, _self_less_caller(inst, target.is_async))
-        else:
-            new = _instrument(
-                original,
-                spec.name,
-                spec.adapter,
-                is_async=target.is_async,
-                messages_key=spec.messages_key,
-                force_stream=target.force_stream,
-                inject_stream_usage=spec.inject_stream_usage,
-            )
-            setattr(host, target.attr, new)  # type: ignore[method-assign]
+            wrapped = _self_less_caller(wrapped, target.is_async)
+        replacements.append((host, target.attr, original, wrapped))
+
+    applied = []
+    try:
+        for host, attr, original, wrapped in replacements:
+            applied.append((host, attr, original))
+            setattr(host, attr, wrapped)
+    except BaseException:
+        for host, attr, original in reversed(applied):
+            setattr(host, attr, original)
+        raise
 
     _patched.add(spec.name)
     return True
