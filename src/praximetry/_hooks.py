@@ -9,25 +9,32 @@ blocks with one.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-from typing import Any, Generic, TypeVar
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any, Generic, TypeVar
 
 F = TypeVar("F", bound=Callable[..., Any])
 
 
 class Hook(Generic[F]):
     def __init__(self) -> None:
-        self.fn: F | None = None
+        self._default: F | None = None
+        self._bound: ContextVar[F | None] = ContextVar(f"prax_hook_{id(self)}", default=None)
+
+    @property
+    def fn(self) -> F | None:
+        bound = self._bound.get()
+        return bound if bound is not None else self._default
 
     def set(self, fn: F | None) -> None:
-        self.fn = fn
+        self._default = fn
 
     @contextmanager
     def bound(self, fn: F) -> Iterator[None]:
-        """Install `fn` for the duration of the block, restoring the previous value after."""
-        prev, self.fn = self.fn, fn
+        """Install `fn` in this execution context, restoring it on exit."""
+        token = self._bound.set(fn)
         try:
             yield
         finally:
-            self.fn = prev
+            self._bound.reset(token)

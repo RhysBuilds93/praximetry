@@ -37,6 +37,48 @@ def test_hook_bound_restores_previous_on_exit():
     assert h.fn() == "outer"
 
 
+def test_hook_bound_is_isolated_between_overlapping_threads():
+    from threading import Event, Thread
+
+    from praximetry._hooks import Hook
+
+    hook = Hook()
+
+    def first_fn():
+        return "first"
+
+    def second_fn():
+        return "second"
+
+    first_entered = Event()
+    second_entered = Event()
+    first_exited = Event()
+    observed = []
+
+    def first():
+        with hook.bound(first_fn):
+            first_entered.set()
+            assert second_entered.wait(timeout=2)
+        first_exited.set()
+
+    def second():
+        assert first_entered.wait(timeout=2)
+        with hook.bound(second_fn):
+            second_entered.set()
+            assert first_exited.wait(timeout=2)
+            observed.append(hook.fn)
+
+    threads = [Thread(target=first), Thread(target=second)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=3)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert observed == [second_fn]
+    assert hook.fn is None
+
+
 def test_pricing_known_and_prefix():
     assert pricing.cost_usd("claude-sonnet-5", 1_000_000, 0) == 3.0
     assert pricing.cost_usd("claude-haiku-4-5-20251001", 0, 1_000_000) == 5.0

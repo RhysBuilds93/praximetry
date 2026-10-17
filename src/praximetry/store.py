@@ -149,6 +149,8 @@ def _warn_if_truncated(what: str, rows: list, limit: int) -> None:
 class Store:
     def __init__(self, db_path: str | Path | None = None):
         self.db_path = Path(db_path) if db_path else get_config().db_path
+        if str(self.db_path) != ":memory:":
+            self.db_path = self.db_path.resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         c = self._conn()

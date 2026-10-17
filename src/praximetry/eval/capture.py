@@ -53,8 +53,8 @@ class CaptureError(RuntimeError):
     """Capture could not produce a request shape for this example."""
 
 
-class _CaptureSignal(Exception):
-    """Internal control-flow signal — carries the intercepted record_call() kwargs."""
+class _CaptureSignal(BaseException):
+    """Internal control-flow signal that ordinary stage exception handlers cannot swallow."""
 
     def __init__(self, kwargs: dict[str, Any]):
         self.kwargs = kwargs
@@ -83,6 +83,7 @@ def capture_request(example: Example) -> CapturedRequest:
             f"Stage '{example.stage}' not registered. Decorate it with @praximetry.stage "
             f"and import the module before capturing. Known: {sorted(runtime.STAGE_REGISTRY)}"
         )
+    instrument_patch.auto_instrument()
 
     def _intercept(call: Any = None, **kwargs: Any) -> Any:
         if call is not None:
