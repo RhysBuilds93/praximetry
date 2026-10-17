@@ -51,6 +51,9 @@ local storage, cost calculation, and the `praximetry eval` CI-gate command
 locally). Auto-optimization and the hosted dashboard are a separate product —
 see [praximetry.io](https://praximetry.io).
 
+SQLite store paths are anchored when the store is created, so later working-directory changes do
+not redirect connections opened by worker threads.
+
 ## Hosted eval and CI exit codes
 
 `praximetry eval` imports the stage module, fetches hosted golden examples,
