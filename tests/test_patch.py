@@ -151,6 +151,101 @@ def test_sync_stream_close_and_iteration_error_record_partial_output():
     assert get_store().calls()[0].output_text == "partial"
     assert stream._stream.closed
 
+def test_sync_stream_iteration_error_records_partial_output_and_error():
+    def broken():
+        yield NS(choices=[NS(delta=NS(content="partial"))], usage=None)
+        raise RuntimeError("iteration failed")
+
+    stream = P._instrument(lambda self, **k: broken(), "openai", ADAPTERS["openai"], False)(
+        None, model="gpt-4o", messages=[], stream=True
+    )
+    next(stream)
+    try:
+        next(stream)
+    except RuntimeError as exc:
+        assert str(exc) == "iteration failed"
+    else:
+        raise AssertionError("iteration error was not re-raised")
+    call = get_store().calls()[0]
+    assert call.output_text == "partial" and call.error == "iteration failed"
+
+
+def test_sync_stream_open_error_is_recorded_and_reraised():
+    def broken(self, **kwargs):
+        raise RuntimeError("open failed")
+
+    create = P._instrument(broken, "openai", ADAPTERS["openai"], False)
+    try:
+        create(None, model="gpt-4o", messages=[], stream=True)
+    except RuntimeError as exc:
+        assert str(exc) == "open failed"
+    else:
+        raise AssertionError("open error was not re-raised")
+    assert get_store().calls()[0].error == "open failed"
+
+
+def test_async_stream_close_and_iteration_error_record_partial_output():
+    async def agen():
+        yield NS(choices=[NS(delta=NS(content="partial"))], usage=None)
+        raise RuntimeError("async iteration failed")
+
+    async def orig(self, **kwargs):
+        return agen()
+
+    create = P._instrument(orig, "openai", ADAPTERS["openai"], is_async=True)
+
+    async def run():
+        stream = await create(None, model="gpt-4o", messages=[], stream=True)
+        await anext(stream)
+        await stream.aclose()
+
+    asyncio.run(run())
+    assert get_store().calls()[0].output_text == "partial"
+
+
+def test_async_stream_iteration_error_records_partial_output_and_error():
+    async def agen():
+        yield NS(choices=[NS(delta=NS(content="partial"))], usage=None)
+        raise RuntimeError("async iteration failed")
+
+    async def orig(self, **kwargs):
+        return agen()
+
+    create = P._instrument(orig, "openai", ADAPTERS["openai"], is_async=True)
+
+    async def run():
+        stream = await create(None, model="gpt-4o", messages=[], stream=True)
+        await anext(stream)
+        try:
+            await anext(stream)
+        except RuntimeError as exc:
+            assert str(exc) == "async iteration failed"
+        else:
+            raise AssertionError("iteration error was not re-raised")
+
+    asyncio.run(run())
+    call = get_store().calls()[0]
+    assert call.output_text == "partial" and call.error == "async iteration failed"
+
+
+def test_async_stream_open_error_is_recorded_and_reraised():
+    async def broken(self, **kwargs):
+        raise RuntimeError("async open failed")
+
+    create = P._instrument(broken, "openai", ADAPTERS["openai"], is_async=True)
+
+    async def run():
+        try:
+            await create(None, model="gpt-4o", messages=[], stream=True)
+        except RuntimeError as exc:
+            assert str(exc) == "async open failed"
+        else:
+            raise AssertionError("open error was not re-raised")
+
+    asyncio.run(run())
+    assert get_store().calls()[0].error == "async open failed"
+
+
 
 
 
