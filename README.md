@@ -50,6 +50,19 @@ local storage, cost calculation, and the `praximetry eval` CI-gate command
 locally). Auto-optimization and the hosted dashboard are a separate product —
 see [praximetry.io](https://praximetry.io).
 
+## Hosted eval and CI exit codes
+
+`praximetry eval` imports the stage module, fetches hosted golden examples,
+captures requests locally, and sends those request shapes to the hosted scorer.
+Capture initializes the supported SDK patchers and stops intercepted calls
+before the real model request. Providers or SDK entry points without a supported
+patcher cannot be safely captured; do not run those stages with live provider
+credentials.
+
+The command exits `0` when quality meets the threshold, `1` when quality is
+below it, and `2` when the gate cannot run (for example, an unreachable API,
+invalid stage module, or no usable captures).
+
 ## License
 
 GPL-3.0-or-later — see [LICENSE](LICENSE).

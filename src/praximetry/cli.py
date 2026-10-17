@@ -125,6 +125,10 @@ def eval_cmd(
         except CloudError as e:
             console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
             raise typer.Exit(EXIT_UNUSABLE) from e
+        except Exception as e:
+            console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
+            raise typer.Exit(EXIT_UNUSABLE) from e
+
         if default is None:
             console.print(
                 "[danger]error:[/danger] no --stage/--project given and no default saved — "
@@ -145,6 +149,9 @@ def eval_cmd(
         try:
             client = client_from_env()
         except CloudError as e:
+            console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
+            raise typer.Exit(EXIT_UNUSABLE) from e
+        except Exception as e:
             console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
             raise typer.Exit(EXIT_UNUSABLE) from e
 
@@ -171,6 +178,12 @@ def eval_cmd(
                 captures_by_stage.setdefault(ex.stage, []).append(capture_request(ex))
             except CaptureError as e:
                 console.print(f"  [SKIP] {ex.stage}/{ex.id}: {e}", markup=False, soft_wrap=True)
+            except Exception as e:
+                console.print(
+                    f"  [SKIP] {ex.stage}/{ex.id}: stage failed: {escape(str(e))}",
+                    markup=False,
+                    soft_wrap=True,
+                )
         if stage_level_skipped:
             console.print(
                 f"skipped {stage_level_skipped} stage-level example(s): "
@@ -253,6 +266,18 @@ def eval_cmd(
     except CloudError as e:
         console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
         raise typer.Exit(EXIT_UNUSABLE) from e
+    except typer.Exit:
+        raise
+    except Exception as e:
+        console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
+        raise typer.Exit(EXIT_UNUSABLE) from e
+
+    if not isinstance(fail_under, (int, float)) or isinstance(fail_under, bool):
+        console.print("[danger]error:[/danger] fail_under must be a number.", soft_wrap=True)
+        raise typer.Exit(EXIT_UNUSABLE)
+    if not 0 <= fail_under <= 1:
+        console.print("[danger]error:[/danger] fail_under must be between 0 and 1.", soft_wrap=True)
+        raise typer.Exit(EXIT_UNUSABLE)
 
     if quality < fail_under:
         console.print(
