@@ -122,7 +122,8 @@ def test_sync_streaming_records_after_consumption():
     c = get_store().calls()[0]
     assert c.output_text == "hello" and c.input_tokens == 4 and c.output_tokens == 2
 
-def test_sync_stream_close_and_iteration_error_record_partial_output():
+def test_sync_stream_close_records_partial_output():
+
     class Stream:
         def __init__(self):
             self.chunks = iter(
@@ -184,10 +185,14 @@ def test_sync_stream_open_error_is_recorded_and_reraised():
     assert get_store().calls()[0].error == "open failed"
 
 
-def test_async_stream_close_and_iteration_error_record_partial_output():
+def test_async_stream_close_records_partial_output_and_delegates_aclose():
+    closed = []
+
     async def agen():
-        yield NS(choices=[NS(delta=NS(content="partial"))], usage=None)
-        raise RuntimeError("async iteration failed")
+        try:
+            yield NS(choices=[NS(delta=NS(content="partial"))], usage=None)
+        finally:
+            closed.append(True)
 
     async def orig(self, **kwargs):
         return agen()
@@ -201,6 +206,8 @@ def test_async_stream_close_and_iteration_error_record_partial_output():
 
     asyncio.run(run())
     assert get_store().calls()[0].output_text == "partial"
+    assert closed == [True]
+
 
 
 def test_async_stream_iteration_error_records_partial_output_and_error():
