@@ -152,7 +152,7 @@ class CloudClient:
 
     def fetch_eval_config(self, project: str, stage: str | None = None) -> dict:
         """GET /api/eval/config — the effective --fail-under default (stage
-        override if one was saved, else the project default, else 0.8)."""
+        override if one was saved, else the project default, else 0.9)."""
         params = {"project": project}
         if stage:
             params["stage"] = stage
@@ -191,6 +191,7 @@ class CloudClient:
         transforms: tuple[str, ...] | list[str] = (),
         quality_tolerance: float = 0.02,
         max_trials: int = 8,
+        project: str | None = None,
     ) -> dict:
         """POST a captured request shape to /api/optimize/captures to trigger a
         hosted optimization run. All trial logic (transforms, candidate selection,
@@ -200,6 +201,7 @@ class CloudClient:
                 self._url("/api/optimize/captures"),
                 json={
                     "stage": stage,
+                    "project": project,
                     "captured_request": captured_request.model_dump(),
                     "candidate_models": list(candidate_models),
                     "transforms": list(transforms),
@@ -211,12 +213,16 @@ class CloudClient:
         )
         return resp.json()
 
-    def fetch_winner(self, stage: str) -> dict | None:
-        """GET /api/optimize/winner?stage=X — the winning policy from the most
-        recently completed optimize run for this stage. Returns None if no
-        completed run exists at all (404); raises CloudError on other errors."""
+    def fetch_winner(self, stage: str, project: str | None = None) -> dict | None:
+        """Fetch the latest winning policy for the stage within the selected project.
+
+        Return None when no completed run exists (404); raise CloudError on other errors.
+        """
+        params = {"stage": stage}
+        if project is not None:
+            params["project"] = project
         resp = self._client.get(
-            self._url("/api/optimize/winner"), params={"stage": stage}, headers=self._headers
+            self._url("/api/optimize/winner"), params=params, headers=self._headers
         )
         if resp.status_code == 404:
             return None
