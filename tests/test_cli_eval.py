@@ -35,6 +35,7 @@ def _stub_app(
     eval_config: dict | None = None,
     eval_default: dict | None = None,
     eval_scorers: dict | None = None,
+    response_by_stage: dict[str, dict] | None = None,
 ) -> FastAPI:
     app = FastAPI()
     corpus_examples = examples if examples is not None else EXAMPLES
@@ -82,6 +83,7 @@ def _stub_app(
         caps = body["captures"]
         experiment_id = body.get("experiment_id") or "generated-experiment-id"
         scored = _score(caps)
+        scored.update((response_by_stage or {}).get(body["stage"], {}))
         batches.setdefault(experiment_id, {})[body["stage"]] = scored
         return {
             "status": "saved",
@@ -777,3 +779,247 @@ def test_eval_non_numeric_threshold_from_config_is_unusable(monkeypatch, fake_ll
 
     assert result.exit_code == 2, result.output
     assert "fail_under must be a number" in result.output
+
+
+def _regression(*, regressed: bool = False, example_id: str = "e1") -> dict:
+    return {
+        "baseline": {
+            "experiment_id": "baseline-exp",
+            "git_branch": "main",
+            "git_commit": "baseline-sha",
+            "created_at": "2026-10-01T00:00:00Z",
+        },
+        "overlap": 2,
+        "added": ["e3"],
+        "removed": ["e0"],
+        "baseline_quality": 0.95,
+        "quality": 0.975,
+        "aggregate_delta": 0.025,
+        "regressed": (
+            [{"example_id": example_id, "baseline_score": 1.0, "score": 0.95}]
+            if regressed
+            else []
+        ),
+        "tolerance": 0.02,
+    }
+
+
+@pytest.mark.parametrize(
+    "regression,fail_on_regression,exit_code",
+    [
+        (None, False, 0),
+        (None, True, 0),
+        (_regression(), False, 0),
+        (_regression(), True, 0),
+        (_regression(regressed=True), False, 0),
+        (_regression(regressed=True), True, 1),
+    ],
+)
+def test_eval_reports_regressions_and_only_gates_when_opted_in(
+    monkeypatch, fake_llm, regression, fail_on_regression, exit_code
+):
+    response = {"regression": regression} if regression is not None else {}
+    http = TestClient(
+        _stub_app(
+            score_by_example={"e1": 0.95, "e2": 1.0},
+            response_by_stage={"plan_action": response},
+        )
+    )
+    _patch_client(monkeypatch, http)
+    _register_project_stages(fake_llm)
+    args = ["eval", "--stage", "plan_action", "--fail-under", "0.9"]
+    if fail_on_regression:
+        args.append("--fail-on-regression")
+
+    result = runner.invoke(cli_app, args)
+
+    assert result.exit_code == exit_code, result.output
+    if regression is not None:
+        assert "regression plan_action:" in result.output
+        assert "baseline=baseline-exp" in result.output
+        assert "overlap=2" in result.output
+        assert "added=1 removed=1" in result.output
+        assert "delta=+0.025" in result.output
+    elif fail_on_regression:
+        assert "regression plan_action: no baseline" in result.output
+    if regression and regression["regressed"]:
+        assert "WARNING" in result.output
+        assert "plan_action: 1 example(s) regressed" in result.output
+        assert "e1 (1.000 -> 0.950)" in result.output
+    else:
+        assert "WARNING" not in result.output
+    if exit_code == 0:
+        assert "PASS" in result.output
+    else:
+        assert "FAIL" in result.output
+        assert "--fail-on-regression" in result.output
+        assert "PASS" not in result.output
+
+
+@pytest.mark.parametrize("regressed_stage", [None, "plan_action", "confirm_action"])
+@pytest.mark.parametrize("fail_on_regression", [False, True])
+def test_eval_project_aggregates_regressions_from_any_stage(
+    monkeypatch, fake_llm, regressed_stage, fail_on_regression
+):
+    http = TestClient(
+        _stub_app(
+            score_by_example={},
+            examples=PROJECT_EXAMPLES,
+            response_by_stage=(
+                {
+                    regressed_stage: {
+                        "regression": _regression(
+                            regressed=True,
+                            example_id="e1" if regressed_stage == "plan_action" else "e2",
+                        )
+                    }
+                }
+                if regressed_stage is not None
+                else {}
+            ),
+        )
+    )
+    _patch_client(monkeypatch, http)
+    _register_project_stages(fake_llm)
+    args = ["eval", "--project", "proj", "--fail-under", "0.9"]
+    if fail_on_regression:
+        args.append("--fail-on-regression")
+
+    result = runner.invoke(cli_app, args)
+
+    assert result.exit_code == (1 if fail_on_regression and regressed_stage else 0), result.output
+    assert "aggregate quality=1.00" in result.output
+    if regressed_stage is not None:
+        assert f"regression {regressed_stage}:" in result.output
+        assert f"WARNING: {regressed_stage}: 1 example(s) regressed" in result.output
+    else:
+        assert "WARNING" not in result.output
+        if fail_on_regression:
+            assert "regression plan_action: no baseline" in result.output
+            assert "regression confirm_action: no baseline" in result.output
+
+
+@pytest.mark.parametrize("scope", [["--stage", "plan_action"], ["--project", "proj"]])
+def test_eval_missing_baseline_does_not_bypass_quality_threshold(monkeypatch, fake_llm, scope):
+    http = TestClient(
+        _stub_app(score_by_example={"e1": 0.0, "e2": 0.0}, examples=PROJECT_EXAMPLES)
+    )
+    _patch_client(monkeypatch, http)
+    _register_project_stages(fake_llm)
+
+    result = runner.invoke(cli_app, ["eval", *scope, "--fail-on-regression"])
+
+    assert result.exit_code == 1, result.output
+    assert "no baseline" in result.output
+    assert "FAIL: quality" in result.output
+
+
+@pytest.mark.parametrize("scope", [["--stage", "plan_action"], ["--project", "proj"]])
+def test_eval_regression_option_preserves_unusable_exit_code(monkeypatch, scope):
+    http = TestClient(_stub_app(score_by_example={}, examples=[]))
+    _patch_client(monkeypatch, http)
+
+    result = runner.invoke(cli_app, ["eval", *scope, "--fail-on-regression"])
+
+    assert result.exit_code == 2, result.output
+    assert "No golden examples" in result.output
+
+
+@pytest.mark.parametrize("scope", [["--stage", "plan_action"], ["--project", "proj"]])
+@pytest.mark.parametrize("unscored", [0, 2])
+def test_eval_reports_nonzero_unscored_counts_per_stage(
+    monkeypatch, fake_llm, scope, unscored
+):
+    http = TestClient(
+        _stub_app(
+            score_by_example={},
+            examples=PROJECT_EXAMPLES,
+            response_by_stage={
+                "plan_action": {"unscored": unscored},
+                "confirm_action": {"unscored": 0},
+            },
+        )
+    )
+    _patch_client(monkeypatch, http)
+    _register_project_stages(fake_llm)
+
+    result = runner.invoke(cli_app, ["eval", *scope])
+
+    assert result.exit_code == 0, result.output
+    if unscored:
+        assert f"unscored in plan_action: {unscored}" in result.output
+    else:
+        assert "unscored" not in result.output
+    assert "unscored in confirm_action" not in result.output
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_eval_sends_ci_git_metadata_and_explicit_overrides_for_every_stage(
+    monkeypatch, fake_llm, tmp_path, override
+):
+    monkeypatch.chdir(tmp_path)
+    event = tmp_path / "github-event.json"
+    event.write_text('{"repository": {"default_branch": "main"}}')
+    monkeypatch.setenv("GITHUB_HEAD_REF", "feature/pr")
+    monkeypatch.setenv("GITHUB_REF_NAME", "123/merge")
+    monkeypatch.setenv("GITHUB_SHA", "ci-sha")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event))
+    http = TestClient(_stub_app(score_by_example={}, examples=PROJECT_EXAMPLES))
+    _patch_client(monkeypatch, http)
+    _register_project_stages(fake_llm)
+    args = ["eval", "--project", "proj"]
+    expected = {
+        "git_branch": "feature/pr",
+        "git_commit": "ci-sha",
+        "default_branch": "main",
+    }
+    if override:
+        args += ["--branch", "manual", "--commit", "manual-sha", "--default-branch", "trunk"]
+        expected = {
+            "git_branch": "manual",
+            "git_commit": "manual-sha",
+            "default_branch": "trunk",
+        }
+
+    result = runner.invoke(cli_app, args)
+
+    assert result.exit_code == 0, result.output
+    assert len(http.app.state.captures_seen) == 2
+    for body in http.app.state.captures_seen:
+        assert {key: body[key] for key in expected} == expected
+    assert len({body["experiment_id"] for body in http.app.state.captures_seen}) == 1
+
+
+def test_eval_without_git_still_evaluates_and_omits_unknown_metadata(
+    monkeypatch, fake_llm, tmp_path
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", "")
+    for name in ("GITHUB_HEAD_REF", "GITHUB_REF_NAME", "GITHUB_SHA", "GITHUB_EVENT_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    http = TestClient(_stub_app(score_by_example={}))
+    _patch_client(monkeypatch, http)
+    _register_project_stages(fake_llm)
+
+    result = runner.invoke(cli_app, ["eval", "--stage", "plan_action"])
+
+    assert result.exit_code == 0, result.output
+    body = http.app.state.captures_seen[0]
+    assert "git_branch" not in body
+    assert "git_commit" not in body
+    assert "default_branch" not in body
+
+
+@pytest.mark.parametrize("contents", [None, "{not-json}"])
+def test_eval_config_read_errors_are_actionable_and_unusable(monkeypatch, tmp_path, contents):
+    monkeypatch.delenv("PRAXIMETRY_API_KEY", raising=False)
+    config_path = tmp_path / "[broken].json"
+    if contents is not None:
+        config_path.write_text(contents)
+
+    result = runner.invoke(cli_app, ["eval", "--config", str(config_path)])
+
+    assert result.exit_code == 2, result.output
+    assert "error:" in result.output
+    assert "[broken].json" in result.output
+    assert ("could not read --config" if contents is None else "not valid JSON") in result.output
