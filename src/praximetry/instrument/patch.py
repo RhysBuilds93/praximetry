@@ -23,6 +23,12 @@ from .wrap import AsyncStreamWrapper, SyncStreamWrapper
 logger = logging.getLogger(__name__)
 
 _patched: set[str] = set()
+_RAW_RESPONSE_TYPES = {
+    ("openai._legacy_response", "LegacyAPIResponse"),
+    ("anthropic._legacy_response", "LegacyAPIResponse"),
+    ("openai._response", "APIResponse"),
+    ("anthropic._response", "APIResponse"),
+}
 
 # Pre-flight capture hook (PRA-66): when set, patched create()/acreate()
 # wrappers call this INSTEAD of the real `original(...)`, so
@@ -34,13 +40,15 @@ capture_hook: Hook[Callable[[dict], Any]] = Hook()
 
 
 def _unwrap_for_parsing(resp: Any) -> Any:
-    """LangChain (and any caller using `with_raw_response`) gets back a
-    LegacyAPIResponse wrapper with no `.usage`/`.choices` -- only its parsed
-    `.parse()` result has those. `.parse()` is cached, so calling it here
-    doesn't disturb the caller's own later `.parse()` call on the same resp.
+    """Unwrap known SDK raw responses via their cached synchronous parse().
+
+    Match the defining class in the MRO without importing optional SDKs. A
+    response model's own `parse` method/field is not an SDK wrapper.
     """
-    parse = getattr(resp, "parse", None)
-    return parse() if callable(parse) else resp
+    for cls in type(resp).__mro__:
+        if (cls.__module__, cls.__name__) in _RAW_RESPONSE_TYPES:
+            return resp.parse()
+    return resp
 
 
 @contextmanager
@@ -195,7 +203,7 @@ def _instrument(
                     kwargs.setdefault("stream_options", {"include_usage": True})
                 try:
                     resp = await original(self, *args, **kwargs)
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     _record(provider, model, messages, NormalizedOutput(), t0, str(e))
                     raise
                 return AsyncStreamWrapper(
@@ -207,7 +215,7 @@ def _instrument(
 
             try:
                 resp = await original(self, *args, **kwargs)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 _record(provider, model, messages, NormalizedOutput(), t0, str(e))
                 raise
             return _finish_call(provider, model, messages, adapter, resp, t0)
@@ -229,7 +237,7 @@ def _instrument(
                 kwargs.setdefault("stream_options", {"include_usage": True})
             try:
                 resp = original(self, *args, **kwargs)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 _record(provider, model, messages, NormalizedOutput(), t0, str(e))
                 raise
             return SyncStreamWrapper(
@@ -239,7 +247,7 @@ def _instrument(
 
         try:
             resp = original(self, *args, **kwargs)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             _record(provider, model, messages, NormalizedOutput(), t0, str(e))
             raise
         return _finish_call(provider, model, messages, adapter, resp, t0)

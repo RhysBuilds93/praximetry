@@ -2,11 +2,18 @@
 buffered/streaming recording paths, driven through the OutputAdapter registry."""
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from types import SimpleNamespace as NS
+
+import httpx
+import pytest
+from pydantic import BaseModel
 
 from praximetry.instrument import patch as P
 from praximetry.instrument.adapters import ADAPTERS
 from praximetry.instrument.providers import PROVIDERS, PatchTarget, ProviderSpec
+from praximetry.runtime import capture_context, current_run
 from praximetry.store import get_store
 
 
@@ -435,3 +442,144 @@ def test_stream_accumulate_failure_is_logged_not_swallowed_silently(caplog):
     with caplog.at_level(logging.DEBUG, logger="praximetry.instrument.wrap"):
         assert list(wrapper) == ["a"]
     assert any("accumulate failed" in r.message for r in caplog.records)
+
+
+def test_lazy_run_is_shared_by_patched_calls_in_asyncio_gather():
+    async def original(self, **kwargs):
+        await asyncio.sleep(0)
+        return _oai_resp("out", 5, 2)
+
+    create = P._instrument(original, "openai", ADAPTERS["openai"], True)
+
+    async def one(index):
+        return await create(
+            None, model="gpt-4o", messages=[{"role": "user", "content": str(index)}]
+        )
+
+    async def gather():
+        return await asyncio.gather(one(0), one(1), one(2))
+
+    asyncio.run(gather())
+    calls = get_store().calls()
+    assert len(calls) == 3
+    assert {call.run_id for call in calls} == {current_run(create=False).id}
+    assert all(call.parent_call_id is None for call in calls)
+    assert len(get_store().runs()) == 1
+    assert capture_context()["current_call_id"] in {call.id for call in calls}
+
+
+def test_lazy_run_is_shared_by_patched_calls_in_thread_pool():
+    barrier = Barrier(3)
+
+    def original(self, **kwargs):
+        barrier.wait(timeout=5)
+        return _oai_resp("out", 5, 2)
+
+    create = P._instrument(original, "openai", ADAPTERS["openai"], False)
+
+    def one(index):
+        return create(
+            None, model="gpt-4o", messages=[{"role": "user", "content": str(index)}]
+        )
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        responses = list(pool.map(one, range(3)))
+    assert len(responses) == 3
+    calls = get_store().calls()
+    assert len(calls) == 3
+    assert {call.run_id for call in calls} == {current_run(create=False).id}
+    assert all(call.parent_call_id is None for call in calls)
+    assert len(get_store().runs()) == 1
+    assert capture_context()["current_call_id"] in {call.id for call in calls}
+
+
+def test_pydantic_response_parse_field_is_not_invoked_by_instrumentation():
+    parsed = []
+
+    def parse():
+        parsed.append(True)
+        return _oai_resp("not the response", 0, 0)
+
+    class LegacyAPIResponse(BaseModel):
+        choices: list
+        usage: object
+        parse: object
+
+    response = LegacyAPIResponse(
+        choices=[NS(message=NS(content="real response"))],
+        usage=NS(prompt_tokens=5, completion_tokens=2),
+        parse=parse,
+    )
+    create = P._instrument(lambda self, **kwargs: response, "openai", ADAPTERS["openai"], False)
+    assert create(None, model="gpt-4o", messages=[]) is response
+    assert parsed == []
+    call = get_store().calls()[0]
+    assert call.output_text == "real response"
+    assert call.input_tokens == 5
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic"])
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("is_async", [False, True])
+def test_known_sdk_raw_responses_are_recorded_and_returned_intact(provider, legacy, is_async):
+    if provider == "openai":
+        from openai import OpenAI as Client
+        from openai._legacy_response import LegacyAPIResponse
+        from openai._models import FinalRequestOptions
+        from openai._response import APIResponse
+        from openai.types.chat import ChatCompletion as ResponseModel
+
+        model = "gpt-4o"
+        payload = {
+            "id": "chatcmpl-1", "object": "chat.completion", "created": 0, "model": model,
+            "choices": [{
+                "index": 0, "finish_reason": "stop",
+                "message": {"role": "assistant", "content": "raw reply"},
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+        }
+    else:
+        from anthropic import Anthropic as Client
+        from anthropic._legacy_response import LegacyAPIResponse
+        from anthropic._models import FinalRequestOptions
+        from anthropic._response import APIResponse
+        from anthropic.types import Message as ResponseModel
+
+        model = "claude-sonnet-5"
+        payload = {
+            "id": "msg_1", "type": "message", "role": "assistant", "model": model,
+            "content": [{"type": "text", "text": "raw reply"}],
+            "stop_reason": "end_turn", "stop_sequence": None,
+            "usage": {"input_tokens": 5, "output_tokens": 2},
+        }
+
+    with Client(api_key="test") as client:
+        response_type = LegacyAPIResponse if legacy else APIResponse
+        response = response_type(
+            raw=httpx.Response(
+                200, json=payload, request=httpx.Request("POST", "https://example.test/messages")
+            ),
+            cast_to=ResponseModel, client=client, stream=False, stream_cls=None,
+            options=FinalRequestOptions.construct(method="post", url="/messages"),
+        )
+
+        def original(self, **kwargs):
+            return response
+
+        async def async_original(self, **kwargs):
+            return response
+
+        create = P._instrument(
+            async_original if is_async else original, provider, ADAPTERS[provider], is_async
+        )
+        result = create(None, model=model, messages=[])
+        assert (asyncio.run(result) if is_async else result) is response
+        parsed = response.parse()
+        if provider == "openai":
+            assert parsed.choices[0].message.content == "raw reply"
+        else:
+            assert parsed.content[0].text == "raw reply"
+    call = get_store().calls()[0]
+    assert call.output_text == "raw reply"
+    assert call.input_tokens == 5
+    assert call.output_tokens == 2
