@@ -23,6 +23,12 @@ from .wrap import AsyncStreamWrapper, SyncStreamWrapper
 logger = logging.getLogger(__name__)
 
 _patched: set[str] = set()
+_RAW_RESPONSE_TYPES = {
+    ("openai._legacy_response", "LegacyAPIResponse"),
+    ("anthropic._legacy_response", "LegacyAPIResponse"),
+    ("openai._response", "APIResponse"),
+    ("anthropic._response", "APIResponse"),
+}
 
 # Pre-flight capture hook (PRA-66): when set, patched create()/acreate()
 # wrappers call this INSTEAD of the real `original(...)`, so
@@ -34,13 +40,15 @@ capture_hook: Hook[Callable[[dict], Any]] = Hook()
 
 
 def _unwrap_for_parsing(resp: Any) -> Any:
-    """LangChain (and any caller using `with_raw_response`) gets back a
-    LegacyAPIResponse wrapper with no `.usage`/`.choices` -- only its parsed
-    `.parse()` result has those. `.parse()` is cached, so calling it here
-    doesn't disturb the caller's own later `.parse()` call on the same resp.
+    """Unwrap known SDK raw responses via their cached synchronous parse().
+
+    Match the defining class in the MRO without importing optional SDKs. A
+    response model's own `parse` method/field is not an SDK wrapper.
     """
-    parse = getattr(resp, "parse", None)
-    return parse() if callable(parse) else resp
+    for cls in type(resp).__mro__:
+        if (cls.__module__, cls.__name__) in _RAW_RESPONSE_TYPES:
+            return resp.parse()
+    return resp
 
 
 @contextmanager
@@ -84,6 +92,7 @@ def _apply_overrides(kwargs: dict[str, Any], messages_key: str) -> dict[str, Any
     return kwargs
 
 
+
 def _record(
     provider: str, model: str, messages: list, out: NormalizedOutput, t0: float, error: str | None
 ) -> None:
@@ -109,18 +118,32 @@ def _record(
         logger.warning("praximetry: failed to record %s call", provider, exc_info=True)
 
 
+
 def _make_stream_done(provider: str, model: str, messages: list, adapter, t0: float):
     def on_done(state: dict[str, Any]) -> None:
         state["model"] = model
         out = adapter.finalize_stream(state)
-        _record(provider, model, messages, out, t0, None)
+        _record(provider, model, messages, out, t0, state.get("error"))
 
     return on_done
 
 
-def _prepare_call(kwargs: dict[str, Any], messages_key: str, provider: str, adapter):
-    """Shared pre-call setup for the sync/async create() wrappers: apply
-    overrides and resolve model/messages/capture-hook-payload."""
+
+
+def _prepare_call(
+    args: tuple[Any, ...], kwargs: dict[str, Any], messages_key: str,
+    provider: str, adapter, self_less: bool,
+):
+    """Apply overrides/capture while preserving module APIs' positional binding."""
+    positional = {
+        index: key
+        for index, key in enumerate(("model", messages_key))
+        if self_less and index < len(args) and key not in kwargs
+    }
+    if positional:
+        kwargs = dict(kwargs)
+        for index, key in positional.items():
+            kwargs[key] = args[index]
     kwargs = _apply_overrides(kwargs, messages_key)
     model = kwargs.get("model", "unknown")
     try:
@@ -138,7 +161,12 @@ def _prepare_call(kwargs: dict[str, Any], messages_key: str, provider: str, adap
         if capture_hook.fn is not None
         else None
     )
-    return kwargs, model, messages, capture_payload
+    if positional:
+        args = tuple(
+            kwargs.pop(positional[index]) if index in positional else value
+            for index, value in enumerate(args)
+        )
+    return args, kwargs, model, messages, capture_payload
 
 
 def _finish_call(provider: str, model: str, messages: list, adapter, resp: Any, t0: float) -> Any:
@@ -159,13 +187,14 @@ def _instrument(
     messages_key: str = "messages",
     force_stream: bool = False,
     inject_stream_usage: bool = False,
+    self_less: bool = False,
 ) -> Callable:
     """Build a patched create() wrapping `original` for one provider/sync-ness."""
     if is_async:
 
         async def acreate(self: Any, *args: Any, **kwargs: Any) -> Any:
-            kwargs, model, messages, capture_payload = _prepare_call(
-                kwargs, messages_key, provider, adapter
+            args, kwargs, model, messages, capture_payload = _prepare_call(
+                args, kwargs, messages_key, provider, adapter, self_less
             )
             if capture_payload is not None:
                 return capture_hook.fn(capture_payload)
@@ -173,15 +202,21 @@ def _instrument(
             if force_stream or kwargs.get("stream"):
                 if inject_stream_usage:
                     kwargs.setdefault("stream_options", {"include_usage": True})
-                resp = await original(self, *args, **kwargs)
+                try:
+                    resp = await original(self, *args, **kwargs)
+                except Exception as e:
+                    _record(provider, model, messages, NormalizedOutput(), t0, str(e))
+                    raise
                 return AsyncStreamWrapper(
                     resp,
                     adapter.accumulate,
                     _make_stream_done(provider, model, messages, adapter, t0),
                 )
+
+
             try:
                 resp = await original(self, *args, **kwargs)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 _record(provider, model, messages, NormalizedOutput(), t0, str(e))
                 raise
             return _finish_call(provider, model, messages, adapter, resp, t0)
@@ -190,8 +225,8 @@ def _instrument(
         return acreate
 
     def create(self: Any, *args: Any, **kwargs: Any) -> Any:
-        kwargs, model, messages, capture_payload = _prepare_call(
-            kwargs, messages_key, provider, adapter
+        args, kwargs, model, messages, capture_payload = _prepare_call(
+            args, kwargs, messages_key, provider, adapter, self_less
         )
         if capture_payload is not None:
             return capture_hook.fn(capture_payload)
@@ -199,13 +234,19 @@ def _instrument(
         if force_stream or kwargs.get("stream"):
             if inject_stream_usage:
                 kwargs.setdefault("stream_options", {"include_usage": True})
-            resp = original(self, *args, **kwargs)
+            try:
+                resp = original(self, *args, **kwargs)
+            except Exception as e:
+                _record(provider, model, messages, NormalizedOutput(), t0, str(e))
+                raise
             return SyncStreamWrapper(
                 resp, adapter.accumulate, _make_stream_done(provider, model, messages, adapter, t0)
             )
+
+
         try:
             resp = original(self, *args, **kwargs)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             _record(provider, model, messages, NormalizedOutput(), t0, str(e))
             raise
         return _finish_call(provider, model, messages, adapter, resp, t0)
@@ -234,11 +275,13 @@ def _self_less_caller(inst: Callable, is_async: bool) -> Callable:
         async def acall(*a: Any, **k: Any) -> Any:
             return await inst(None, *a, **k)
 
+        acall._praximetry_patched = True  # type: ignore[attr-defined]
         return acall
 
     def call(*a: Any, **k: Any) -> Any:
         return inst(None, *a, **k)
 
+    call._praximetry_patched = True  # type: ignore[attr-defined]
     return call
 
 
@@ -251,33 +294,37 @@ def _patch(spec: ProviderSpec) -> bool:
     except ImportError:
         return False
 
+    replacements = []
     for target in spec.targets:
         host = async_host if target.is_async else sync_host
         if target.optional and not hasattr(host, target.attr):
             continue
         original = getattr(host, target.attr)
+        if getattr(original, "_praximetry_patched", False):
+            continue
+        wrapped = _instrument(
+            _self_less(original) if target.self_less else original,
+            spec.name,
+            spec.adapter,
+            is_async=target.is_async,
+            messages_key=spec.messages_key,
+            force_stream=target.force_stream,
+            inject_stream_usage=spec.inject_stream_usage,
+            self_less=target.self_less,
+        )
         if target.self_less:
-            inst = _instrument(
-                _self_less(original),
-                spec.name,
-                spec.adapter,
-                is_async=target.is_async,
-                messages_key=spec.messages_key,
-                force_stream=target.force_stream,
-                inject_stream_usage=spec.inject_stream_usage,
-            )
-            setattr(host, target.attr, _self_less_caller(inst, target.is_async))
-        else:
-            new = _instrument(
-                original,
-                spec.name,
-                spec.adapter,
-                is_async=target.is_async,
-                messages_key=spec.messages_key,
-                force_stream=target.force_stream,
-                inject_stream_usage=spec.inject_stream_usage,
-            )
-            setattr(host, target.attr, new)  # type: ignore[method-assign]
+            wrapped = _self_less_caller(wrapped, target.is_async)
+        replacements.append((host, target.attr, original, wrapped))
+
+    applied = []
+    try:
+        for host, attr, original, wrapped in replacements:
+            applied.append((host, attr, original))
+            setattr(host, attr, wrapped)
+    except BaseException:
+        for host, attr, original in reversed(applied):
+            setattr(host, attr, original)
+        raise
 
     _patched.add(spec.name)
     return True

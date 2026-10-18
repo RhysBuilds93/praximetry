@@ -64,3 +64,20 @@ def test_snapshot_resolves_to_most_specific_base(snapshot: str, base: str):
 )
 def test_cheaper_models_are_strictly_cheaper(model: str, expected: list[str]):
     assert pricing.cheaper_models(model) == expected
+
+
+@pytest.mark.parametrize(
+    ("input_tokens", "output_tokens", "expected"),
+    [
+        (None, None, 0.0),
+        (None, 1_000_000, 10.0),
+        (1_000_000, None, 2.5),
+        (-1, -1, 0.0),
+        (-1, 1_000_000, 10.0),
+        (1_000_000, -1, 2.5),
+    ],
+)
+def test_missing_and_negative_token_counts_are_zero(input_tokens, output_tokens, expected):
+    cost = pricing.cost_usd("gpt-4o", input_tokens, output_tokens)
+    assert isinstance(cost, float)
+    assert cost == expected

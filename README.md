@@ -39,8 +39,64 @@ pip install praximetry
 `praximetry` doesn't require openai/anthropic/etc. to be installed — the
 per-provider patchers import lazily, so `init()` only instruments what's
 actually present. For manual instrumentation (or providers without a patcher),
-call `px.record_call(...)` directly inside a `@px.stage`
-function.
+call `px.record_call(...)` directly inside a `@px.stage` function. LiteLLM's
+`completion` entry point supports positional `model` and `messages` arguments,
+including when an active model override is applied.
+
+Patching is atomic per provider: if an SDK target is missing or cannot be
+replaced, its other targets keep their original methods. Repeated
+instrumentation leaves existing wrappers in place, so a completion is recorded
+once even after an instrumentation retry.
+LiteLLM module calls support positional model/messages and later positional
+arguments (such as timeout), including model/prompt overrides and capture.
+
+## Stages and concurrent runs
+
+Bare `@px.stage` and `@px.stage("")` use the callable's `__name__`, or its type
+name when no function name is available (`partial` for `functools.partial`,
+for example). Choose explicit, unique names for unrelated stages: registering
+a different module/qualified function name logs a warning and replaces the
+previous registration. Reloading the same module/qualified name does not warn.
+
+Without an explicit run, the first recorded call lazily creates one process-wide
+run, shared by concurrent asyncio tasks and worker threads. Changing the
+configured project or reopening the store starts a new process-wide run on its
+next use, leaving existing run rows intact and clearing each context's old
+parent-call ancestry when it observes the replacement run. Use
+`praximetry.runtime.run_context(...)` to isolate separate requests or trials;
+explicit runs take precedence over the process-wide run.
+
+Asyncio tasks inherit the active context. Across thread/executor boundaries,
+pass `praximetry.runtime.capture_context()` to the worker and enter
+`restore_context(snapshot)` there to preserve the explicit run, stage, parent
+call and model/prompt overrides. In the same process, restored contexts share
+an unfinished Run, including its latest call and metadata, but each restoration
+starts an independent ancestry branch. Context capture follows the caller's own
+branch (including children it dispatched), not a sibling restored worker or
+unrelated concurrent branch. When the caller has no local ancestry, capture uses
+the shared run's latest call. Capturing a snapshot does not trigger run rollover
+or clear local ancestry after configuration changes; the next recorded call does.
+Unknown or finished run IDs create a detached local Run with the captured ID,
+so late workers do not mutate a finalized parent Run or replace its finalized
+metadata in cloud uploads.
+Snapshots containing a `prompt_transform` callable preserve it by reference
+and cannot be JSON-serialized as-is.
+
+Run persistence failures are logged with a traceback without preventing entry
+to `run_context` or masking an exception from its body. Manual
+`px.record_call(**kwargs)` still validates its Call fields when recording is
+disabled; disabling recording skips persistence, not input validation.
+
+Raw OpenAI/Anthropic responses are parsed only for recognized SDK
+`LegacyAPIResponse`/synchronous `APIResponse` wrappers. A response model's own
+`parse` field or method is left untouched.
+
+The LangChain callback handler retains the model from invocation parameters
+(preferred over serialized defaults), including for failed calls. Each handler
+keeps at most 1024 unfinished LLM starts so abandoned runs cannot accumulate
+without bound. Older starts are evicted first; their late completions still
+record, but lack the evicted prompt/model and original latency start time.
+
 
 ## What this is (and isn't)
 
@@ -49,6 +105,114 @@ local storage, cost calculation, and the `praximetry eval` CI-gate command
 (which only captures request shapes — it never scores or judges anything
 locally). Auto-optimization and the hosted dashboard are a separate product —
 see [praximetry.io](https://praximetry.io).
+
+`praximetry optimize` and `praximetry apply` operate on the configured project
+(`PRAXIMETRY_PROJECT`, default `default`). Pass `--project` to target another
+project when a stage name exists in more than one.
+
+SQLite store paths are anchored when the store is created, so later working-directory changes do
+not redirect connections opened by worker threads.
+
+## Hosted eval and CI exit codes
+
+`praximetry eval` imports the stage module, fetches hosted golden examples,
+captures requests locally, and sends those request shapes to the hosted scorer.
+Capture initializes the supported SDK patchers and stops intercepted calls
+before the real model request. Providers or SDK entry points without a supported
+patcher cannot be safely captured; do not run those stages with live provider
+credentials.
+
+Set `PRAXIMETRY_API_KEY` to a dashboard-issued API key and
+`PRAXIMETRY_API_URL` to the hosted API's HTTPS URL (or let Databricks discover
+the app URL). The client **refuses** non-HTTPS URLs rather than sending the
+bearer key insecurely. Plain HTTP is allowed only for local development on
+`localhost`, `127.0.0.1`, or `::1`.
+
+```bash
+praximetry eval --project my-agent --module my_agent --fail-under 0.9 --fail-on-regression
+```
+
+The command exits `0` when quality meets the threshold, `1` when quality is
+below it, and `2` when the gate cannot run (for example, an unreachable API,
+invalid config or stage module, or no usable captures). With
+`--fail-on-regression`, any example in the hosted comparison's `regressed`
+list also causes exit `1`, **even when aggregate quality passes**. In project
+mode this includes regressions in any evaluated stage. If there is no
+baseline, it prints `no baseline` and still applies the quality threshold.
+Without the flag, regressions do not change the exit code. Whenever a
+comparison is returned, the CLI prints its baseline, overlap, added/removed
+counts, quality delta, and a warning identifying any regressed examples.
+If the baseline and current run have no overlapping scored examples, comparison
+quality and delta are shown as `n/a`. With nothing comparable, there is no
+regression failure, even with `--fail-on-regression`; the current run's quality
+threshold still applies.
+Nonzero server-reported `unscored` counts are printed per stage in both stage
+and project modes; this is informational and does not add another gate.
+
+Captures include optional `git_branch`, `git_commit`, and `default_branch`
+metadata. Detection is independent for each field:
+
+1. Explicit `--branch`, `--commit`, or `--default-branch` overrides.
+2. GitHub Actions: `GITHUB_HEAD_REF` (PR branch), then `GITHUB_REF_NAME`;
+   `GITHUB_SHA`; and `repository.default_branch` from the JSON event file at
+   `GITHUB_EVENT_PATH`.
+3. The local checkout: `git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD`,
+   and `git symbolic-ref refs/remotes/origin/HEAD`, respectively.
+
+Unresolved fields are omitted: missing git, a non-repository directory, or a
+missing remote default never blocks evaluation. A detached checkout omits the
+local branch but can still report its commit. For a different CI provider,
+override only what it cannot discover:
+
+```bash
+praximetry eval --project my-agent --module my_agent \
+  --branch feature/new-prompt --commit abc123 --default-branch main \
+  --fail-on-regression
+```
+
+With no `--stage`, `--project`, or `--config`, the command uses the saved
+dashboard default. Only the cloud's `{"detail":"no default eval saved"}` 404
+response means no default is saved. Other 404s (including FastAPI's generic
+`{"detail":"Not Found"}`) and non-JSON/HTML responses report an API URL or
+server-version problem instead. API error body previews are capped at 500
+characters, with `...` marking truncation.
+
+### GitHub Actions example
+
+In your agent repository, install the application and its dependencies and
+point `--module` at the module registering your stages (`my_agent` below).
+Set the repository variable `PRAXIMETRY_API_URL` and secret
+`PRAXIMETRY_API_KEY`. Git metadata is detected automatically, including a PR's
+head branch when checkout is detached:
+
+```yaml
+name: Agent eval
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e . praximetry
+      - name: Gate quality and per-example regressions
+        env:
+          PRAXIMETRY_API_URL: ${{ vars.PRAXIMETRY_API_URL }}
+          PRAXIMETRY_API_KEY: ${{ secrets.PRAXIMETRY_API_KEY }}
+        run: >
+          praximetry eval --project my-agent --module my_agent
+          --fail-under 0.9 --fail-on-regression
+```
+
+The job needs a usable API key; fork pull requests normally cannot access
+repository secrets. Only run agent code you trust with that key, and do not
+use `pull_request_target` to give untrusted pull-request code access to secrets.
 
 ## License
 

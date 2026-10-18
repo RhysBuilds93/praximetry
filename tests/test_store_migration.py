@@ -4,6 +4,9 @@ import multiprocessing
 import sqlite3
 import time
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+
+from praximetry.models import Run
 
 from praximetry.store import Store, _enable_wal
 
@@ -57,6 +60,8 @@ def test_index_on_late_added_column_does_not_block_migration(tmp_path: Path) -> 
     db_path = tmp_path / "old.db"
     conn = sqlite3.connect(db_path)
     conn.execute("CREATE TABLE calls (id TEXT PRIMARY KEY, ts REAL)")
+    conn.execute("CREATE TABLE runs (id TEXT PRIMARY KEY, started_at REAL)")
+    conn.execute("CREATE TABLE eval_results (id TEXT PRIMARY KEY, ts REAL)")
     conn.commit()
     conn.close()
 
@@ -64,6 +69,17 @@ def test_index_on_late_added_column_does_not_block_migration(tmp_path: Path) -> 
 
     cols = {row[1] for row in store._conn().execute("PRAGMA table_info(calls)").fetchall()}
     assert {"run_id", "stage"} <= cols
+    for table, column in [
+        ("calls", "ts"),
+        ("runs", "started_at"),
+        ("eval_results", "experiment_id"),
+    ]:
+        indexes = store._conn().execute(f"PRAGMA index_list({table})").fetchall()
+        indexed_columns = [
+            [row[2] for row in store._conn().execute(f"PRAGMA index_info({index[1]})")]
+            for index in indexes
+        ]
+        assert [column] in indexed_columns
 
 
 def test_concurrent_opens_of_an_unmigrated_db(tmp_path: Path) -> None:
@@ -85,6 +101,24 @@ def test_concurrent_opens_of_an_unmigrated_db(tmp_path: Path) -> None:
 
 def test_in_memory_store_opens() -> None:
     assert Store(":memory:").totals()["n"] == 0
+
+
+def test_relative_db_path_is_fixed_when_store_is_created(tmp_path: Path, monkeypatch) -> None:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    monkeypatch.chdir(origin)
+    store = Store(Path("data") / "traces.db")
+    database = origin / "data" / "traces.db"
+
+    monkeypatch.chdir(other)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        pool.submit(store.save_run, Run(id="from-worker")).result()
+
+    with sqlite3.connect(database) as conn:
+        assert conn.execute("SELECT id FROM runs").fetchall() == [("from-worker",)]
+    assert not (other / "data" / "traces.db").exists()
 
 
 def test_enable_wal_gives_up_while_another_connection_holds_the_lock(tmp_path: Path) -> None:

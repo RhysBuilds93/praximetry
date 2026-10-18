@@ -49,9 +49,11 @@ _last_drop_log = 0.0
 
 
 def note_run(run: Run) -> None:
-    """Register (or refresh) a Run so a later flush can resolve the batch of
-    calls sharing its run_id. Call this wherever a Run is created/updated."""
-    _run_cache[run.id] = run
+    """Register a Run without letting detached workers replace finalized metadata."""
+    with _lock:
+        cached = _run_cache.get(run.id)
+        if cached is None or cached.ended_at is None:
+            _run_cache[run.id] = run
 
 
 def set_redaction_hook(fn: Callable[[Call], Call] | None) -> None:
@@ -173,7 +175,10 @@ def _drain_and_push() -> None:
     for run_id, group in by_run.items():
         # A hand-built Call(run_id=...) whose Run never went through note_run
         # still carries enough to push; synthesize a bare Run rather than drop it.
-        run = _run_cache.get(run_id) or Run(id=run_id)
+        with _lock:
+            run = _run_cache.get(run_id)
+        if run is None:
+            run = Run(id=run_id)
         try:
             hook = redaction_hook.fn
             payload = [hook(c) if hook else c for c in group]

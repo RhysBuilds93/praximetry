@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import threading
 import time
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from typing import Any, ContextManager
 from collections.abc import Callable
+from weakref import WeakValueDictionary
 
 from . import cloud_sync
 from ._hooks import Hook
 from .config import get_config
 from .models import Call, Run
-from .store import get_store
+from .store import Store, get_store
 
 logger = logging.getLogger(__name__)
 
@@ -21,16 +24,32 @@ _current_run: contextvars.ContextVar[Run | None] = contextvars.ContextVar("run",
 _stage_stack: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
     "stage_stack", default=()
 )
-# Most recently recorded call; asyncio.gather/create_task copy it so fan-out calls
-# inherit the same parent -- but only forward, from parent to child at Task-creation
-# time. A child Task's own record_call() writes never flow back to whichever task
-# awaits it, so capture_context() reads Run.last_call_id (below) to bridge that gap.
-_current_call: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+
+
+@dataclass
+class _CallContext:
+    run_id: str
+    call_id: str
+    child: _CallContext | None = None
+    bridge: _CallContext | None = None
+
+
+# Tasks inherit the same node, but each record forks a new local node. The child
+# link bridges awaited work back to its caller without linking sibling branches.
+_current_call: contextvars.ContextVar[_CallContext | None] = contextvars.ContextVar(
     "current_call", default=None
 )
 _overrides: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "overrides", default=None
 )
+
+# Context-local explicit runs take precedence over the lazily-created process run.
+# Do not bind the fallback to a task's ContextVar: sibling tasks/threads would miss it.
+_default_run: Run | None = None
+_default_run_store: Store | None = None
+_run_lock = threading.Lock()
+_live_runs: WeakValueDictionary[str, Run] = WeakValueDictionary()
+_call_contexts: WeakValueDictionary[str, _CallContext] = WeakValueDictionary()
 
 STAGE_REGISTRY: dict[str, Callable[..., Any]] = {}  # so eval/optimize can re-run stages by name
 
@@ -42,15 +61,42 @@ def set_policy_hook(fn: Callable[[str], ContextManager[None]] | None) -> None:
     policy_hook.set(fn)
 
 
-def current_run(create: bool = True) -> Run | None:
-    run = _current_run.get()
-    if run is None and create:
-        cfg = get_config()
-        run = Run(project=cfg.project)
-        _current_run.set(run)
+def _save_run(run: Run) -> None:
+    try:
         get_store().save_run(run)
-        cloud_sync.note_run(run)
-    return run
+    except Exception:  # persistence must not block or mask the customer's execution
+        logger.warning("praximetry: failed to save run %s", run.id, exc_info=True)
+    cloud_sync.note_run(run)
+
+
+def current_run(create: bool = True) -> Run | None:
+    """Return the explicit run, or the process-wide run shared by lazy fan-out."""
+    global _default_run, _default_run_store
+    run = _current_run.get()
+    if run is not None:
+        return run
+    with _run_lock:
+        if _default_run is None and not create:
+            _current_call.set(None)
+            return None
+        cfg = get_config()
+        store = get_store()
+        if _default_run is not None and (
+            _default_run.project != cfg.project or _default_run_store is not store
+        ):
+            _default_run = None
+            _default_run_store = None
+        parent = _current_call.get()
+        if _default_run is None and create:
+            _default_run = Run(project=cfg.project)
+            _default_run_store = store
+            _live_runs[_default_run.id] = _default_run
+            _save_run(_default_run)
+        if parent is not None and (
+            _default_run is None or parent.run_id != _default_run.id
+        ):
+            _current_call.set(None)
+        return _default_run
 
 
 def current_stage() -> str | None:
@@ -64,11 +110,12 @@ def get_overrides() -> dict[str, Any] | None:
 
 @contextmanager
 def run_context(name: str | None = None, experiment_id: str | None = None):
-    """Open a fresh Run (used per eval example / experiment trial)."""
+    """Open an isolated Run; persistence failures are logged, never raised."""
     cfg = get_config()
     run = Run(project=cfg.project, name=name, experiment_id=experiment_id)
-    get_store().save_run(run)
-    cloud_sync.note_run(run)
+    with _run_lock:
+        _live_runs[run.id] = run
+    _save_run(run)
     token = _current_run.set(run)
     call_token = _current_call.set(None)
     try:
@@ -76,8 +123,7 @@ def run_context(name: str | None = None, experiment_id: str | None = None):
     finally:
         _current_call.reset(call_token)
         run.ended_at = time.time()
-        get_store().save_run(run)
-        cloud_sync.note_run(run)
+        _save_run(run)
         _current_run.reset(token)
 
 
@@ -91,34 +137,73 @@ def stage_context(name: str):
 
 
 def capture_context() -> dict[str, Any]:
-    """Serializable run/stage/call snapshot; carry explicitly across boundaries contextvars
-    don't survive (e.g. LangGraph's per-step executor, or reading back a call recorded
-    inside an awaited asyncio.Task), restore with restore_context()."""
-    run = _current_run.get()
+    """Capture run/stage/call/overrides for restore_context() across thread hops.
+
+    Run identity is resolved locally without retaining it in the snapshot. A
+    prompt_transform callable is preserved by reference, not JSON-serializable.
+    """
+    with _run_lock:
+        # Capturing snapshots must not roll over a default run or clear ancestry
+        # merely because configuration changed; recording handles that cutover.
+        run = _current_run.get() or _default_run
+        parent = _current_call.get()
+        if parent is not None and run is not None and parent.run_id == run.id:
+            latest = parent
+            while latest.child is not None:
+                latest = latest.child
+            if latest is not parent:
+                parent.child = latest
+            call_id = latest.call_id
+        else:
+            call_id = run.last_call_id if run else None
     return {
         "run_id": run.id if run else None,
         "run_project": run.project if run else None,
         "stage_stack": _stage_stack.get(),
-        "current_call_id": run.last_call_id if run else None,
+        "current_call_id": call_id,
+        "overrides": dict(overrides) if (overrides := _overrides.get()) is not None else None,
     }
 
 
 @contextmanager
 def restore_context(ctx: dict[str, Any] | None):
-    """Re-enter a context captured with capture_context(). No-op if ctx has no run_id."""
-    if not ctx or not ctx.get("run_id"):
+    """Restore a snapshot, sharing its Run only while it is unfinished in this process."""
+    if not ctx:
         yield
         return
-    run = Run(id=ctx["run_id"], project=ctx.get("run_project") or "default")
-    run_token = _current_run.set(run)
+    run = None
+    parent = None
+    if run_id := ctx.get("run_id"):
+        with _run_lock:
+            run = _live_runs.get(run_id)
+            shared_run = run is not None and run.ended_at is None
+            if run is None or run.ended_at is not None:
+                run = Run(
+                    id=run_id,
+                    project=ctx.get("run_project") or "default",
+                    last_call_id=ctx.get("current_call_id"),
+                )
+                _live_runs[run.id] = run
+            if call_id := ctx.get("current_call_id"):
+                # A restored branch owns its child link. Publish completed work
+                # back to the original caller, never through a sibling's root.
+                origin = _call_contexts.get(call_id) if shared_run else None
+                if origin is not None and origin.run_id != run.id:
+                    origin = None
+                parent = _CallContext(run.id, call_id, bridge=origin)
+    run_token = _current_run.set(run) if run is not None else None
     stage_token = _stage_stack.set(tuple(ctx.get("stage_stack") or ()))
-    call_token = _current_call.set(ctx.get("current_call_id"))
+    call_token = _current_call.set(parent)
+    overrides = ctx.get("overrides")
+    override_token = _overrides.set(dict(overrides) if overrides is not None else None)
     try:
         yield
     finally:
+        _overrides.reset(override_token)
         _current_call.reset(call_token)
         _stage_stack.reset(stage_token)
-        _current_run.reset(run_token)
+        if run_token is not None:
+            _current_run.reset(run_token)
 
 
 @contextmanager
@@ -144,9 +229,13 @@ def policy_scope(stage: str):
 
 
 def reset_runtime() -> None:
-    """Testing hook: clear run/stage/call/override state left dangling by a
-    direct current_run()/override_context() call that skipped run_context()'s
-    own reset-on-exit."""
+    """Testing hook: discard the process run and clear local context state."""
+    global _default_run, _default_run_store
+    with _run_lock:
+        _default_run = None
+        _default_run_store = None
+        _live_runs.clear()
+        _call_contexts.clear()
     _current_run.set(None)
     _stage_stack.set(())
     _current_call.set(None)
@@ -154,22 +243,31 @@ def reset_runtime() -> None:
 
 
 def record_call(call: Call | None = None, **kwargs: Any) -> Call:
-    """Persist an LLM call. Used by patchers; also public for manual logging."""
+    """Persist an LLM call. Manual kwargs are validated even when recording is disabled."""
     if not get_config().enabled:
         return call or Call(run_id="disabled", **kwargs)
     if call is None:
         run = current_run()
         kwargs.setdefault("stage", current_stage())
-        kwargs.setdefault("parent_call_id", _current_call.get())
+        parent = _current_call.get()
+        kwargs.setdefault("parent_call_id", parent.call_id if parent else None)
         call = Call(run_id=run.id, **kwargs)
     else:
-        run = _current_run.get()
+        run = current_run(create=False)
     get_store().save_call(call)
     if cloud_sync.is_running():
         if run is not None:
             cloud_sync.note_run(run)
         cloud_sync.enqueue(call)
-    _current_call.set(call.id)
-    if run is not None:
-        run.last_call_id = call.id
+    with _run_lock:
+        parent = _current_call.get()
+        local = _CallContext(call.run_id, call.id)
+        if parent is not None and parent.run_id == call.run_id:
+            parent.child = local
+            if parent.bridge is not None:
+                parent.bridge.child = local
+        _call_contexts[call.id] = local
+        _current_call.set(local)
+        if run is not None:
+            run.last_call_id = call.id
     return call

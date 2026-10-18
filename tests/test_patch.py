@@ -2,11 +2,18 @@
 buffered/streaming recording paths, driven through the OutputAdapter registry."""
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from types import SimpleNamespace as NS
+
+import httpx
+import pytest
+from pydantic import BaseModel
 
 from praximetry.instrument import patch as P
 from praximetry.instrument.adapters import ADAPTERS
-from praximetry.instrument.providers import PROVIDERS
+from praximetry.instrument.providers import PROVIDERS, PatchTarget, ProviderSpec
+from praximetry.runtime import capture_context, current_run
 from praximetry.store import get_store
 
 
@@ -87,6 +94,90 @@ def _oai_resp(text, tin, tout):
     )
 
 
+def _patched_litellm(monkeypatch):
+    seen = []
+
+    def completion(model, messages=None, **kwargs):
+        seen.append((model, messages, kwargs))
+        return _oai_resp("out", 5, 2)
+
+    host = NS(completion=completion)
+    spec = ProviderSpec(
+        name="litellm",
+        owner=lambda: (host, host),
+        targets=[PatchTarget("completion", self_less=True)],
+        adapter=ADAPTERS["litellm"],
+    )
+    monkeypatch.setattr(P, "_patched", set())
+    assert P._patch(spec)
+    return host, seen
+
+
+def test_litellm_positional_call_is_recorded(monkeypatch):
+    host, seen = _patched_litellm(monkeypatch)
+    messages = [{"role": "user", "content": "hi"}]
+
+    host.completion("gpt-4o", messages)
+
+    assert seen == [("gpt-4o", messages, {})]
+    call = get_store().calls()[0]
+    assert call.model == "gpt-4o"
+    assert call.messages == messages
+
+
+def test_litellm_positional_call_accepts_model_override(monkeypatch):
+    from praximetry.runtime import override_context
+
+    host, seen = _patched_litellm(monkeypatch)
+    messages = [{"role": "user", "content": "hi"}]
+
+    with override_context(model="gpt-4o-mini"):
+        host.completion("gpt-4o", messages)
+
+    assert seen == [("gpt-4o-mini", messages, {})]
+
+@pytest.mark.parametrize("is_async", [False, True])
+@pytest.mark.parametrize("override", [False, True])
+def test_litellm_preserves_third_positional_argument(monkeypatch, is_async, override):
+    from praximetry.runtime import override_context
+
+    seen = []
+
+    def completion(model, messages=None, timeout=None, **kwargs):
+        seen.append((model, messages, timeout, kwargs))
+        return _oai_resp("out", 5, 2)
+
+    async def acompletion(model, messages=None, timeout=None, **kwargs):
+        return completion(model, messages, timeout, **kwargs)
+
+    host = NS(completion=acompletion if is_async else completion)
+    spec = ProviderSpec(
+        name="litellm",
+        owner=lambda: (host, host),
+        targets=[PatchTarget("completion", is_async=is_async, self_less=True)],
+        adapter=ADAPTERS["litellm"],
+    )
+    monkeypatch.setattr(P, "_patched", set())
+    assert P._patch(spec)
+    messages = [{"role": "user", "content": "hi"}]
+    transformed = [{"role": "user", "content": "transformed"}]
+    with override_context(
+        model="gpt-4o-mini" if override else None,
+        prompt_transform=(lambda _: transformed) if override else None,
+    ):
+        result = host.completion("gpt-4o", messages, 30)
+        if is_async:
+            asyncio.run(result)
+
+    expected_model = "gpt-4o-mini" if override else "gpt-4o"
+    expected_messages = transformed if override else messages
+    assert seen == [(expected_model, expected_messages, 30, {})]
+    call = get_store().calls()[0]
+    assert call.model == expected_model
+    assert call.messages == expected_messages
+
+
+
 def test_sync_buffered_records_normalized_fields():
     create = P._instrument(
         lambda self, **k: _oai_resp("out", 5, 2), "openai", ADAPTERS["openai"], False
@@ -121,6 +212,139 @@ def test_sync_streaming_records_after_consumption():
     assert text == "hello"
     c = get_store().calls()[0]
     assert c.output_text == "hello" and c.input_tokens == 4 and c.output_tokens == 2
+
+def test_sync_stream_close_records_partial_output():
+
+    class Stream:
+        def __init__(self):
+            self.chunks = iter(
+                [
+                    NS(choices=[NS(delta=NS(content="partial"))], usage=None),
+                ]
+            )
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            try:
+                return next(self.chunks)
+            except StopIteration:
+                raise RuntimeError("iteration failed")
+
+        def close(self):
+            self.closed = True
+
+    stream = P._instrument(lambda self, **k: Stream(), "openai", ADAPTERS["openai"], False)(
+        None, model="gpt-4o", messages=[], stream=True
+    )
+    next(stream)
+    stream.close()
+    assert get_store().calls()[0].output_text == "partial"
+    assert stream._stream.closed
+
+def test_sync_stream_iteration_error_records_partial_output_and_error():
+    def broken():
+        yield NS(choices=[NS(delta=NS(content="partial"))], usage=None)
+        raise RuntimeError("iteration failed")
+
+    stream = P._instrument(lambda self, **k: broken(), "openai", ADAPTERS["openai"], False)(
+        None, model="gpt-4o", messages=[], stream=True
+    )
+    next(stream)
+    try:
+        next(stream)
+    except RuntimeError as exc:
+        assert str(exc) == "iteration failed"
+    else:
+        raise AssertionError("iteration error was not re-raised")
+    call = get_store().calls()[0]
+    assert call.output_text == "partial" and call.error == "iteration failed"
+
+
+def test_sync_stream_open_error_is_recorded_and_reraised():
+    def broken(self, **kwargs):
+        raise RuntimeError("open failed")
+
+    create = P._instrument(broken, "openai", ADAPTERS["openai"], False)
+    try:
+        create(None, model="gpt-4o", messages=[], stream=True)
+    except RuntimeError as exc:
+        assert str(exc) == "open failed"
+    else:
+        raise AssertionError("open error was not re-raised")
+    assert get_store().calls()[0].error == "open failed"
+
+
+def test_async_stream_close_records_partial_output_and_delegates_aclose():
+    closed = []
+
+    async def agen():
+        try:
+            yield NS(choices=[NS(delta=NS(content="partial"))], usage=None)
+        finally:
+            closed.append(True)
+
+    async def orig(self, **kwargs):
+        return agen()
+
+    create = P._instrument(orig, "openai", ADAPTERS["openai"], is_async=True)
+
+    async def run():
+        stream = await create(None, model="gpt-4o", messages=[], stream=True)
+        await anext(stream)
+        await stream.aclose()
+
+    asyncio.run(run())
+    assert get_store().calls()[0].output_text == "partial"
+    assert closed == [True]
+
+
+
+def test_async_stream_iteration_error_records_partial_output_and_error():
+    async def agen():
+        yield NS(choices=[NS(delta=NS(content="partial"))], usage=None)
+        raise RuntimeError("async iteration failed")
+
+    async def orig(self, **kwargs):
+        return agen()
+
+    create = P._instrument(orig, "openai", ADAPTERS["openai"], is_async=True)
+
+    async def run():
+        stream = await create(None, model="gpt-4o", messages=[], stream=True)
+        await anext(stream)
+        try:
+            await anext(stream)
+        except RuntimeError as exc:
+            assert str(exc) == "async iteration failed"
+        else:
+            raise AssertionError("iteration error was not re-raised")
+
+    asyncio.run(run())
+    call = get_store().calls()[0]
+    assert call.output_text == "partial" and call.error == "async iteration failed"
+
+
+def test_async_stream_open_error_is_recorded_and_reraised():
+    async def broken(self, **kwargs):
+        raise RuntimeError("async open failed")
+
+    create = P._instrument(broken, "openai", ADAPTERS["openai"], is_async=True)
+
+    async def run():
+        try:
+            await create(None, model="gpt-4o", messages=[], stream=True)
+        except RuntimeError as exc:
+            assert str(exc) == "async open failed"
+        else:
+            raise AssertionError("open error was not re-raised")
+
+    asyncio.run(run())
+    assert get_store().calls()[0].error == "async open failed"
+
+
+
 
 
 def test_openai_streaming_injects_stream_options_for_real_usage():
@@ -259,3 +483,146 @@ def test_stream_accumulate_failure_is_logged_not_swallowed_silently(caplog):
     with caplog.at_level(logging.DEBUG, logger="praximetry.instrument.wrap"):
         assert list(wrapper) == ["a"]
     assert any("accumulate failed" in r.message for r in caplog.records)
+
+
+def test_lazy_run_is_shared_by_patched_calls_in_asyncio_gather():
+    async def original(self, **kwargs):
+        await asyncio.sleep(0)
+        return _oai_resp("out", 5, 2)
+
+    create = P._instrument(original, "openai", ADAPTERS["openai"], True)
+
+    async def one(index):
+        return await create(
+            None, model="gpt-4o", messages=[{"role": "user", "content": str(index)}]
+        )
+
+    async def gather():
+        return await asyncio.gather(one(0), one(1), one(2))
+
+    asyncio.run(gather())
+    calls = get_store().calls()
+    assert len(calls) == 3
+    assert {call.run_id for call in calls} == {current_run(create=False).id}
+    assert all(call.parent_call_id is None for call in calls)
+    assert len(get_store().runs()) == 1
+    assert capture_context()["current_call_id"] in {call.id for call in calls}
+
+
+def test_lazy_run_is_shared_by_patched_calls_in_thread_pool():
+    barrier = Barrier(3)
+
+    def original(self, **kwargs):
+        barrier.wait(timeout=5)
+        return _oai_resp("out", 5, 2)
+
+    create = P._instrument(original, "openai", ADAPTERS["openai"], False)
+
+    def one(index):
+        return create(
+            None, model="gpt-4o", messages=[{"role": "user", "content": str(index)}]
+        )
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        responses = list(pool.map(one, range(3)))
+    assert len(responses) == 3
+    calls = get_store().calls()
+    assert len(calls) == 3
+    assert {call.run_id for call in calls} == {current_run(create=False).id}
+    assert all(call.parent_call_id is None for call in calls)
+    assert len(get_store().runs()) == 1
+    assert capture_context()["current_call_id"] in {call.id for call in calls}
+
+
+def test_pydantic_response_parse_field_is_not_invoked_by_instrumentation():
+    parsed = []
+
+    def parse():
+        parsed.append(True)
+        return _oai_resp("not the response", 0, 0)
+
+    class LegacyAPIResponse(BaseModel):
+        choices: list
+        usage: object
+        parse: object
+
+    response = LegacyAPIResponse(
+        choices=[NS(message=NS(content="real response"))],
+        usage=NS(prompt_tokens=5, completion_tokens=2),
+        parse=parse,
+    )
+    create = P._instrument(lambda self, **kwargs: response, "openai", ADAPTERS["openai"], False)
+    assert create(None, model="gpt-4o", messages=[]) is response
+    assert parsed == []
+    call = get_store().calls()[0]
+    assert call.output_text == "real response"
+    assert call.input_tokens == 5
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic"])
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("is_async", [False, True])
+def test_known_sdk_raw_responses_are_recorded_and_returned_intact(provider, legacy, is_async):
+    if provider == "openai":
+        from openai import OpenAI as Client
+        from openai._legacy_response import LegacyAPIResponse
+        from openai._models import FinalRequestOptions
+        from openai._response import APIResponse
+        from openai.types.chat import ChatCompletion as ResponseModel
+
+        model = "gpt-4o"
+        payload = {
+            "id": "chatcmpl-1", "object": "chat.completion", "created": 0, "model": model,
+            "choices": [{
+                "index": 0, "finish_reason": "stop",
+                "message": {"role": "assistant", "content": "raw reply"},
+            }],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+        }
+    else:
+        from anthropic import Anthropic as Client
+        # Newer anthropic releases dropped the legacy wrapper module.
+        legacy_module = pytest.importorskip("anthropic._legacy_response") if legacy else None
+        LegacyAPIResponse = getattr(legacy_module, "LegacyAPIResponse", None)
+        from anthropic._models import FinalRequestOptions
+        from anthropic._response import APIResponse
+        from anthropic.types import Message as ResponseModel
+
+        model = "claude-sonnet-5"
+        payload = {
+            "id": "msg_1", "type": "message", "role": "assistant", "model": model,
+            "content": [{"type": "text", "text": "raw reply"}],
+            "stop_reason": "end_turn", "stop_sequence": None,
+            "usage": {"input_tokens": 5, "output_tokens": 2},
+        }
+
+    with Client(api_key="test") as client:
+        response_type = LegacyAPIResponse if legacy else APIResponse
+        response = response_type(
+            raw=httpx.Response(
+                200, json=payload, request=httpx.Request("POST", "https://example.test/messages")
+            ),
+            cast_to=ResponseModel, client=client, stream=False, stream_cls=None,
+            options=FinalRequestOptions.construct(method="post", url="/messages"),
+        )
+
+        def original(self, **kwargs):
+            return response
+
+        async def async_original(self, **kwargs):
+            return response
+
+        create = P._instrument(
+            async_original if is_async else original, provider, ADAPTERS[provider], is_async
+        )
+        result = create(None, model=model, messages=[])
+        assert (asyncio.run(result) if is_async else result) is response
+        parsed = response.parse()
+        if provider == "openai":
+            assert parsed.choices[0].message.content == "raw reply"
+        else:
+            assert parsed.content[0].text == "raw reply"
+    call = get_store().calls()[0]
+    assert call.output_text == "raw reply"
+    assert call.input_tokens == 5
+    assert call.output_tokens == 2

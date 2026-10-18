@@ -157,6 +157,27 @@ def test_captures_via_instrumented_real_sdk_client():
     assert captured.messages == [{"role": "user", "content": "double charge"}]
 
 
+def test_capture_signal_is_not_swallowed_by_stage_exception_handler(fake_llm):
+    fallback_ran = []
+
+    @praximetry.stage("capture_with_fallback")
+    def capture_with_fallback(text):
+        try:
+            return fake_llm.chat(
+                "gpt-4o", [{"role": "user", "content": text}], expected_key="primary"
+            )
+        except Exception:
+            fallback_ran.append(True)
+            return fake_llm.chat(
+                "gpt-4o", [{"role": "user", "content": "fallback"}], expected_key="fallback"
+            )
+
+    captured = capture_request(Example(id="e1", stage="capture_with_fallback", input="primary"))
+
+    assert captured.messages == [{"role": "user", "content": "primary"}]
+    assert fallback_ran == []
+
+
 def test_record_call_restored_after_success_and_error(fake_llm):
     @praximetry.stage("classify")
     def classify(text):

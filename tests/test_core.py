@@ -1,12 +1,21 @@
 """Core: pricing, store, decorators, recording."""
 
 import asyncio
+import inspect
+import logging
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+from threading import Barrier
+
+import pytest
+from pydantic import ValidationError
 
 import praximetry
 from praximetry import config, pricing
+from praximetry.models import Call, Run
 from praximetry.runtime import STAGE_REGISTRY, record_call, run_context
-from praximetry.store import Store, get_store
+from praximetry.store import Store, get_store, reset_store
 
 
 def test_generated_ids_use_full_uuid_entropy():
@@ -35,6 +44,48 @@ def test_hook_bound_restores_previous_on_exit():
     with h.bound(lambda: "inner"):
         assert h.fn() == "inner"
     assert h.fn() == "outer"
+
+
+def test_hook_bound_is_isolated_between_overlapping_threads():
+    from threading import Event, Thread
+
+    from praximetry._hooks import Hook
+
+    hook = Hook()
+
+    def first_fn():
+        return "first"
+
+    def second_fn():
+        return "second"
+
+    first_entered = Event()
+    second_entered = Event()
+    first_exited = Event()
+    observed = []
+
+    def first():
+        with hook.bound(first_fn):
+            first_entered.set()
+            assert second_entered.wait(timeout=2)
+        first_exited.set()
+
+    def second():
+        assert first_entered.wait(timeout=2)
+        with hook.bound(second_fn):
+            second_entered.set()
+            assert first_exited.wait(timeout=2)
+            observed.append(hook.fn)
+
+    threads = [Thread(target=first), Thread(target=second)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=3)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert observed == [second_fn]
+    assert hook.fn is None
 
 
 def test_pricing_known_and_prefix():
@@ -92,6 +143,83 @@ def test_bare_stage_decorator():
 
     assert "summarize" in STAGE_REGISTRY
     assert summarize("hello") == "hel"
+
+
+@pytest.mark.parametrize("kind", ["sync", "async", "generator", "async_generator"])
+@pytest.mark.parametrize("different_attribute", ["__module__", "__qualname__"])
+def test_stage_name_collisions_warn_but_keep_the_new_callable(caplog, kind, different_attribute):
+    def original():
+        return "original"
+
+    def sync():
+        return "replacement"
+
+    async def async_():
+        return "replacement"
+
+    def generator():
+        yield "replacement"
+
+    async def async_generator():
+        yield "replacement"
+
+    replacement = {
+        "sync": sync, "async": async_, "generator": generator, "async_generator": async_generator
+    }[kind]
+    original.__module__ = replacement.__module__ = "same_module"
+    original.__qualname__ = replacement.__qualname__ = "run"
+    setattr(replacement, different_attribute, "different_origin")
+    praximetry.stage("collision")(original)
+    with caplog.at_level(logging.WARNING, logger="praximetry.instrument.decorators"):
+        praximetry.stage("collision")(replacement)
+
+    assert len(caplog.records) == 1
+    assert "collision" in caplog.text
+    assert "different_origin" in caplog.text
+    assert "same_module.run" in caplog.text
+    result = STAGE_REGISTRY["collision"]()
+    if inspect.isasyncgen(result):
+        async def consume():
+            return [item async for item in result]
+        assert asyncio.run(consume()) == ["replacement"]
+    elif inspect.isawaitable(result):
+        assert asyncio.run(result) == "replacement"
+    elif inspect.isgenerator(result):
+        assert list(result) == ["replacement"]
+    else:
+        assert result == "replacement"
+
+
+def test_stage_reregistration_from_the_same_module_and_qualname_does_not_warn(caplog):
+    def make_run(value):
+        def run():
+            return value
+        return run
+
+    praximetry.stage("reloadable")(make_run("before reload"))
+    with caplog.at_level(logging.WARNING, logger="praximetry.instrument.decorators"):
+        praximetry.stage("reloadable")(make_run("after reload"))
+    assert caplog.records == []
+    assert STAGE_REGISTRY["reloadable"]() == "after reload"
+
+
+@pytest.mark.parametrize("empty_name", [False, True])
+@pytest.mark.parametrize("callable_kind", ["partial", "instance"])
+def test_stage_uses_the_callable_type_name_without_a_function_name(empty_name, callable_kind):
+    def execute():
+        record_call(provider="fake")
+        return "result"
+
+    class CallableStage:
+        def __call__(self):
+            return execute()
+
+    fn = partial(execute) if callable_kind == "partial" else CallableStage()
+    expected = "partial" if callable_kind == "partial" else "CallableStage"
+    wrapped = praximetry.stage("")(fn) if empty_name else praximetry.stage(fn)
+    assert wrapped() == "result"
+    assert STAGE_REGISTRY[expected]() == "result"
+    assert {call.stage for call in get_store().calls()} == {expected}
 
 
 def test_store_totals_and_summary():
@@ -185,6 +313,76 @@ def test_save_run_survives_out_of_order_migrated_columns():
     got = store.runs()[0]
     assert got.name == "hello"
     assert got.project == "proj"
+
+
+@pytest.mark.parametrize("table", ["runs", "calls"])
+@pytest.mark.parametrize("count", [0, 2, 3])
+def test_truncation_warns_only_when_rows_are_omitted(table, count, caplog):
+    store = get_store()
+    for i in range(count):
+        if table == "runs":
+            store.save_run(Run(id=str(i), started_at=i))
+        else:
+            store.save_call(Call(id=str(i), run_id="r", ts=i))
+
+    with caplog.at_level(logging.WARNING, logger="praximetry.store"):
+        rows = getattr(store, table)(limit=2)
+
+    assert [row.id for row in rows] == [str(i) for i in reversed(range(count))][:2]
+    assert bool(caplog.records) == (count > 2)
+
+
+@pytest.mark.parametrize("reset", [False, True])
+def test_close_releases_connections_from_all_threads(reset):
+    store = get_store()
+    main_connection = store._conn()
+    ready = Barrier(4)
+    closed = Barrier(4)
+
+    def worker():
+        connection = store._conn()
+        ready.wait(timeout=10)
+        closed.wait(timeout=10)
+        with pytest.raises(sqlite3.ProgrammingError):
+            connection.execute("SELECT 1")
+        with pytest.raises(sqlite3.ProgrammingError):
+            store.totals()
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = [pool.submit(worker) for _ in range(3)]
+        ready.wait(timeout=10)
+        try:
+            if reset:
+                reset_store()
+            else:
+                store.close()
+                store.close()
+        finally:
+            closed.wait(timeout=10)
+        for future in futures:
+            future.result(timeout=10)
+
+    with pytest.raises(sqlite3.ProgrammingError):
+        main_connection.execute("SELECT 1")
+    if reset:
+        assert get_store() is not store
+        assert get_store().totals()["n"] == 0
+
+
+@pytest.mark.parametrize("bad_row", [{"run_id": "r", "input_tokens": "bad"}, {}])
+def test_ingest_rolls_back_every_row_on_invalid_call(bad_row):
+    store = get_store()
+    store.save_run(Run(id="existing", name="original"))
+    payload = {
+        "runs": [{"id": "existing", "name": "replacement"}, {"id": "new"}],
+        "calls": [{"id": "valid", "run_id": "new"}, bad_row],
+    }
+
+    with pytest.raises(ValidationError):
+        store.ingest(payload)
+
+    assert [(run.id, run.name) for run in store.runs()] == [("existing", "original")]
+    assert store.calls() == []
 
 
 def test_calls_query_logs_when_truncated_at_limit(caplog):

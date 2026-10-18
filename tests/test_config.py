@@ -2,10 +2,14 @@
 so from_env()'s own env-var parsing has no other coverage."""
 
 from pathlib import Path
+import sqlite3
 
 import pytest
 
+from praximetry import init
 from praximetry.config import Config
+from praximetry.models import Run
+from praximetry.store import get_store
 
 
 def test_from_env_defaults_when_unset(monkeypatch):
@@ -44,3 +48,18 @@ def test_disabled_truthy_values_disable_recording(monkeypatch, value):
     monkeypatch.setenv("PRAXIMETRY_DISABLED", value)
 
     assert Config.from_env().enabled is False
+
+
+def test_init_changes_database_after_store_is_built(tmp_path):
+    old_store = get_store()
+    old_store.save_run(Run(id="old"))
+    new_path = tmp_path / "new.db"
+
+    init(db_path=new_path, auto_instrument_sdks=False, cloud=False)
+    new_store = get_store()
+    new_store.save_run(Run(id="new"))
+
+    assert new_store.db_path == new_path
+    assert [run.id for run in new_store.runs()] == ["new"]
+    with sqlite3.connect(old_store.db_path) as conn:
+        assert conn.execute("SELECT id FROM runs").fetchall() == [("old",)]

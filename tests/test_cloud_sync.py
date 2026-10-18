@@ -6,6 +6,7 @@ auth header, and graceful-degradation behavior cloud_sync actually produces.
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from fastapi import FastAPI, Header, HTTPException
@@ -230,6 +231,31 @@ def test_record_call_enqueues_when_cloud_sync_running(stub):
     cloud_sync.flush_now()
 
     assert len(app.state.received["traces"]) == 1
+
+def test_late_restored_worker_pushes_the_canonical_finalized_run(stub):
+    app, http = stub
+    cloud_sync.start(CloudClient("", VALID_KEY, client=http), flush_interval=3600)
+    with runtime.run_context("parent", experiment_id="experiment") as run:
+        run.metadata["parent"] = "finished"
+        first = runtime.record_call(provider="fake")
+        ctx = runtime.capture_context()
+    finalized = run.model_dump(mode="json")
+    cloud_sync.flush_now()
+
+    def worker():
+        with runtime.restore_context(ctx):
+            runtime.current_run().metadata["late-worker"] = True
+            return runtime.record_call(provider="fake")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        late = pool.submit(worker).result()
+    cloud_sync.flush_now()
+
+    body = app.state.received["traces"][-1]
+    assert body["run"] == finalized
+    assert [call["id"] for call in body["calls"]] == [late.id]
+    assert body["calls"][0]["parent_call_id"] == first.id
+
 
 
 def test_init_cloud_true_without_api_key_raises(monkeypatch):
