@@ -192,7 +192,7 @@ class CloudClient:
                 "PRAXIMETRY_API_URL points to the hosted API and the server supports eval defaults."
             ) from e
         if resp.status_code == 404:
-            if isinstance(default, dict) and "detail" in default:
+            if isinstance(default, dict) and default.get("detail") == "no default eval saved":
                 return None
             raise CloudError(
                 "Unexpected 404 response from /api/eval/default. Check PRAXIMETRY_API_URL "

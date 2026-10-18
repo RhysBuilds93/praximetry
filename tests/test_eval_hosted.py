@@ -618,6 +618,7 @@ def test_fetch_eval_default_returns_none_for_server_no_default_response():
         (404, "not JSON"),
         (200, "<html>Sign in</html>"),
         (404, "{}"),
+        (404, '{"detail":"Not Found"}'),
     ],
 )
 def test_fetch_eval_default_reports_wrong_url_instead_of_missing_default(status, content):

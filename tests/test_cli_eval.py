@@ -856,6 +856,50 @@ def test_eval_reports_regressions_and_only_gates_when_opted_in(
         assert "PASS" not in result.output
 
 
+@pytest.mark.parametrize("scope", [["--stage", "plan_action"], ["--project", "proj"]])
+@pytest.mark.parametrize("fail_on_regression", [False, True])
+@pytest.mark.parametrize("quality,exit_code", [(1.0, 0), (0.5, 1)])
+def test_eval_without_comparable_examples_only_gates_current_quality(
+    monkeypatch, fake_llm, scope, fail_on_regression, quality, exit_code
+):
+    regression = {
+        **_regression(),
+        "overlap": 0,
+        "added": ["e1", "e2"],
+        "removed": ["old-example"],
+        "baseline_quality": None,
+        "quality": None,
+        "aggregate_delta": None,
+        "regressed": [],
+    }
+    http = TestClient(
+        _stub_app(
+            score_by_example={"e1": quality, "e2": quality},
+            response_by_stage={"plan_action": {"regression": regression}},
+        )
+    )
+    _patch_client(monkeypatch, http)
+    _register_project_stages(fake_llm)
+    args = ["eval", *scope, "--fail-under", "0.9"]
+    if fail_on_regression:
+        args.append("--fail-on-regression")
+
+    result = runner.invoke(cli_app, args)
+
+    assert result.exit_code == exit_code, result.output
+    assert "baseline=baseline-exp" in result.output
+    assert "overlap=0" in result.output
+    assert "added=2 removed=1" in result.output
+    assert "quality=n/a->n/a" in result.output
+    assert "delta=n/a regressed=0" in result.output
+    assert f"quality={quality:.2f}" in result.output
+    assert "WARNING" not in result.output
+    if exit_code == 0:
+        assert "PASS" in result.output
+    else:
+        assert "FAIL: quality" in result.output
+
+
 @pytest.mark.parametrize("regressed_stage", [None, "plan_action", "confirm_action"])
 @pytest.mark.parametrize("fail_on_regression", [False, True])
 def test_eval_project_aggregates_regressions_from_any_stage(

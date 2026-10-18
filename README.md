@@ -92,6 +92,10 @@ baseline, it prints `no baseline` and still applies the quality threshold.
 Without the flag, regressions do not change the exit code. Whenever a
 comparison is returned, the CLI prints its baseline, overlap, added/removed
 counts, quality delta, and a warning identifying any regressed examples.
+If the baseline and current run have no overlapping scored examples, comparison
+quality and delta are shown as `n/a`. With nothing comparable, there is no
+regression failure, even with `--fail-on-regression`; the current run's quality
+threshold still applies.
 Nonzero server-reported `unscored` counts are printed per stage in both stage
 and project modes; this is informational and does not add another gate.
 
@@ -117,9 +121,10 @@ praximetry eval --project my-agent --module my_agent \
 ```
 
 With no `--stage`, `--project`, or `--config`, the command uses the saved
-dashboard default. A server response saying no default is saved is distinct
-from a non-JSON/HTML response at that endpoint: the latter reports an API URL
-or server-version problem instead. API error body previews are capped at 500
+dashboard default. Only the cloud's `{"detail":"no default eval saved"}` 404
+response means no default is saved. Other 404s (including FastAPI's generic
+`{"detail":"Not Found"}`) and non-JSON/HTML responses report an API URL or
+server-version problem instead. API error body previews are capped at 500
 characters, with `...` marking truncation.
 
 ### GitHub Actions example

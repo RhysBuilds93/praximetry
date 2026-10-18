@@ -59,7 +59,8 @@ def eval_cmd(
     fail_on_regression: bool = typer.Option(
         False,
         "--fail-on-regression",
-        help="Exit 1 if any example regressed against the hosted baseline, even if quality passes",
+        help="Exit 1 if any example regressed against the hosted baseline, even if quality passes. "
+        "With no overlapping scored examples, only the current quality threshold applies.",
     ),
     branch: str = typer.Option(None, "--branch", help="Override the detected git branch"),
     commit: str = typer.Option(None, "--commit", help="Override the detected git commit"),
@@ -107,6 +108,8 @@ def eval_cmd(
     omitted. Regression summaries and warnings are always shown when available;
     --fail-on-regression gates on any regressed example across all evaluated
     stages. Without a baseline it reports "no baseline" and only gates quality.
+    With no overlapping scored examples, comparison metrics are n/a and only
+    the current quality threshold applies, even with --fail-on-regression.
 
     Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (auto-discovered in Databricks, else required).
     """
@@ -259,12 +262,18 @@ def eval_cmd(
                     )
                 continue
             regressed = regression["regressed"]
+            comparison_quality = "->".join(
+                "n/a" if value is None else f"{value:.3f}"
+                for value in (regression["baseline_quality"], regression["quality"])
+            )
+            delta = regression["aggregate_delta"]
+            delta_text = "n/a" if delta is None else f"{delta:+.3f}"
             console.print(
                 f"regression {stage_name}: baseline={regression['baseline']['experiment_id']} "
                 f"overlap={regression['overlap']} "
                 f"added={len(regression['added'])} removed={len(regression['removed'])} "
-                f"quality={regression['baseline_quality']:.3f}->{regression['quality']:.3f} "
-                f"delta={regression['aggregate_delta']:+.3f} regressed={len(regressed)}",
+                f"quality={comparison_quality} "
+                f"delta={delta_text} regressed={len(regressed)}",
                 markup=False,
                 soft_wrap=True,
             )
