@@ -5,6 +5,7 @@ closed-source cloud repo) — this proves the request shape, auth header, and
 error surfacing CloudClient produces.
 """
 
+import httpx
 import pytest
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.testclient import TestClient
@@ -490,3 +491,149 @@ def test_discover_api_url_tries_resolvers_in_order_and_caches(monkeypatch):
     assert hosted_mod._discover_api_url() == "https://found.example.com"
     assert hosted_mod._discover_api_url() == "https://found.example.com"
     assert calls == ["a", "b"]  # second call served from cache, resolvers not re-run
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {},
+        {"git_branch": "feature/evals"},
+        {"git_commit": "abc123", "default_branch": "main"},
+        {"git_branch": "feature/evals", "git_commit": "abc123", "default_branch": "main"},
+    ],
+)
+def test_capture_metadata_is_optional_in_api_body(stub, metadata):
+    app, http = stub
+    client = CloudClient("", VALID_KEY, client=http)
+
+    client.push_captures("plan_action", CAPTURES, **metadata)
+
+    assert app.state.received["body"] == {
+        "stage": "plan_action",
+        "captures": [capture.model_dump() for capture in CAPTURES],
+        **metadata,
+    }
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.example.com",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://[::1]:8000",
+    ],
+)
+def test_client_from_env_sends_credentials_only_to_secure_or_loopback_urls(monkeypatch, url):
+    from praximetry.eval.hosted import client_from_env
+
+    monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
+    monkeypatch.setenv("PRAXIMETRY_API_URL", url)
+    received = []
+
+    def corpus(request):
+        received.append(request)
+        return httpx.Response(200, json=[{"id": "e1", "stage": "plan_action", "input": "hi"}])
+
+    with httpx.Client(transport=httpx.MockTransport(corpus)) as http:
+        dataset = client_from_env(client=http).fetch_corpus("plan_action")
+
+    assert dataset.examples[0].id == "e1"
+    assert received[0].headers["Authorization"] == f"Bearer {VALID_KEY}"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://api.example.com",
+        "http://0.0.0.0:8000",
+        "http://localhost.example.com",
+        "http://localhost@api.example.com",
+        "ftp://localhost",
+        "api.example.com",
+        "https://[invalid",
+    ],
+)
+def test_client_from_env_refuses_unsafe_urls_before_sending_credentials(monkeypatch, url):
+    from praximetry.eval.hosted import client_from_env
+
+    monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
+    monkeypatch.setenv("PRAXIMETRY_API_URL", url)
+    received = []
+
+    def respond(request):
+        received.append(request)
+        return httpx.Response(200, json=[])
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as http:
+        with pytest.raises(CloudError, match="PRAXIMETRY_API_URL"):
+            client_from_env(client=http).fetch_corpus("plan_action")
+
+    assert received == []
+
+
+def test_client_from_env_also_refuses_insecure_discovered_urls(monkeypatch):
+    from praximetry.eval import hosted as hosted_mod
+
+    monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
+    monkeypatch.delenv("PRAXIMETRY_API_URL", raising=False)
+    monkeypatch.setattr(hosted_mod, "_discover_api_url", lambda: "http://remote.example.com")
+
+    with pytest.raises(CloudError, match="PRAXIMETRY_API_URL.*HTTPS"):
+        hosted_mod.client_from_env()
+
+
+@pytest.mark.parametrize("status", [403, 404, 500])
+def test_api_errors_bound_response_body_length(status):
+    body = "start-of-body " + "x" * 10_000 + " end-of-body"
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(status, text=body))
+    ) as http:
+        client = CloudClient("https://api.example.com", VALID_KEY, client=http)
+        with pytest.raises(CloudError) as exc:
+            client.fetch_corpus("plan_action")
+
+    message = str(exc.value)
+    assert str(status) in message
+    assert "start-of-body" in message
+    assert "end-of-body" not in message
+    assert message.endswith("...")
+    assert len(message) < 700
+
+
+def test_fetch_eval_default_returns_none_for_server_no_default_response():
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(404, json={"detail": "no default eval saved"})
+        )
+    ) as http:
+        client = CloudClient("https://api.example.com", VALID_KEY, client=http)
+        assert client.fetch_eval_default() is None
+
+
+@pytest.mark.parametrize(
+    "status,content",
+    [
+        (404, "<html>Not Found</html>"),
+        (404, "not JSON"),
+        (200, "<html>Sign in</html>"),
+        (404, "{}"),
+        (404, '{"detail":"Not Found"}'),
+    ],
+)
+def test_fetch_eval_default_reports_wrong_url_instead_of_missing_default(status, content):
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(status, text=content))
+    ) as http:
+        client = CloudClient("https://api.example.com", VALID_KEY, client=http)
+        with pytest.raises(CloudError, match="PRAXIMETRY_API_URL"):
+            client.fetch_eval_default()
+
+
+def test_fetch_eval_default_preserves_auth_errors():
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda request: httpx.Response(401, text="sign in"))
+    ) as http:
+        client = CloudClient("https://api.example.com", VALID_KEY, client=http)
+        with pytest.raises(CloudError, match="PRAXIMETRY_API_KEY"):
+            client.fetch_eval_default()

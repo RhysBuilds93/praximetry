@@ -72,9 +72,97 @@ before the real model request. Providers or SDK entry points without a supported
 patcher cannot be safely captured; do not run those stages with live provider
 credentials.
 
+Set `PRAXIMETRY_API_KEY` to a dashboard-issued API key and
+`PRAXIMETRY_API_URL` to the hosted API's HTTPS URL (or let Databricks discover
+the app URL). The client **refuses** non-HTTPS URLs rather than sending the
+bearer key insecurely. Plain HTTP is allowed only for local development on
+`localhost`, `127.0.0.1`, or `::1`.
+
+```bash
+praximetry eval --project my-agent --module my_agent --fail-under 0.9 --fail-on-regression
+```
+
 The command exits `0` when quality meets the threshold, `1` when quality is
 below it, and `2` when the gate cannot run (for example, an unreachable API,
-invalid stage module, or no usable captures).
+invalid config or stage module, or no usable captures). With
+`--fail-on-regression`, any example in the hosted comparison's `regressed`
+list also causes exit `1`, **even when aggregate quality passes**. In project
+mode this includes regressions in any evaluated stage. If there is no
+baseline, it prints `no baseline` and still applies the quality threshold.
+Without the flag, regressions do not change the exit code. Whenever a
+comparison is returned, the CLI prints its baseline, overlap, added/removed
+counts, quality delta, and a warning identifying any regressed examples.
+If the baseline and current run have no overlapping scored examples, comparison
+quality and delta are shown as `n/a`. With nothing comparable, there is no
+regression failure, even with `--fail-on-regression`; the current run's quality
+threshold still applies.
+Nonzero server-reported `unscored` counts are printed per stage in both stage
+and project modes; this is informational and does not add another gate.
+
+Captures include optional `git_branch`, `git_commit`, and `default_branch`
+metadata. Detection is independent for each field:
+
+1. Explicit `--branch`, `--commit`, or `--default-branch` overrides.
+2. GitHub Actions: `GITHUB_HEAD_REF` (PR branch), then `GITHUB_REF_NAME`;
+   `GITHUB_SHA`; and `repository.default_branch` from the JSON event file at
+   `GITHUB_EVENT_PATH`.
+3. The local checkout: `git rev-parse --abbrev-ref HEAD`, `git rev-parse HEAD`,
+   and `git symbolic-ref refs/remotes/origin/HEAD`, respectively.
+
+Unresolved fields are omitted: missing git, a non-repository directory, or a
+missing remote default never blocks evaluation. A detached checkout omits the
+local branch but can still report its commit. For a different CI provider,
+override only what it cannot discover:
+
+```bash
+praximetry eval --project my-agent --module my_agent \
+  --branch feature/new-prompt --commit abc123 --default-branch main \
+  --fail-on-regression
+```
+
+With no `--stage`, `--project`, or `--config`, the command uses the saved
+dashboard default. Only the cloud's `{"detail":"no default eval saved"}` 404
+response means no default is saved. Other 404s (including FastAPI's generic
+`{"detail":"Not Found"}`) and non-JSON/HTML responses report an API URL or
+server-version problem instead. API error body previews are capped at 500
+characters, with `...` marking truncation.
+
+### GitHub Actions example
+
+In your agent repository, install the application and its dependencies and
+point `--module` at the module registering your stages (`my_agent` below).
+Set the repository variable `PRAXIMETRY_API_URL` and secret
+`PRAXIMETRY_API_KEY`. Git metadata is detected automatically, including a PR's
+head branch when checkout is detached:
+
+```yaml
+name: Agent eval
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e . praximetry
+      - name: Gate quality and per-example regressions
+        env:
+          PRAXIMETRY_API_URL: ${{ vars.PRAXIMETRY_API_URL }}
+          PRAXIMETRY_API_KEY: ${{ secrets.PRAXIMETRY_API_KEY }}
+        run: >
+          praximetry eval --project my-agent --module my_agent
+          --fail-under 0.9 --fail-on-regression
+```
+
+The job needs a usable API key; fork pull requests normally cannot access
+repository secrets. Only run agent code you trust with that key, and do not
+use `pull_request_target` to give untrusted pull-request code access to secrets.
 
 ## License
 
