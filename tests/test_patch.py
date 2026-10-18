@@ -540,7 +540,9 @@ def test_known_sdk_raw_responses_are_recorded_and_returned_intact(provider, lega
         }
     else:
         from anthropic import Anthropic as Client
-        from anthropic._legacy_response import LegacyAPIResponse
+        # Newer anthropic releases dropped the legacy wrapper module.
+        legacy_module = pytest.importorskip("anthropic._legacy_response") if legacy else None
+        LegacyAPIResponse = getattr(legacy_module, "LegacyAPIResponse", None)
         from anthropic._models import FinalRequestOptions
         from anthropic._response import APIResponse
         from anthropic.types import Message as ResponseModel
