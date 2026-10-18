@@ -6,6 +6,7 @@ import json
 import logging
 import sqlite3
 import weakref
+from contextvars import Context
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from threading import Barrier
@@ -153,6 +154,57 @@ def test_restored_worker_updates_the_shared_run_and_last_call_bridge():
     assert saved_run.ended_at == run.ended_at
     assert saved_run.metadata == {"worker": "finished"}
 
+@pytest.mark.parametrize("explicit_run", [False, True])
+def test_interleaved_tasks_capture_their_own_branch_parent(explicit_run):
+    async def exercise():
+        first_recorded = asyncio.Event()
+        second_recorded = asyncio.Event()
+
+        async def one():
+            first = record_call(provider="fake")
+            first_recorded.set()
+            await second_recorded.wait()
+            return first, capture_context()
+
+        async def two():
+            await first_recorded.wait()
+            second = record_call(provider="fake")
+            second_recorded.set()
+            return second, capture_context()
+
+        return await asyncio.gather(one(), two())
+
+    @contextmanager
+    def optional_run():
+        if explicit_run:
+            with run_context("shared"):
+                yield
+        else:
+            yield
+
+    with optional_run():
+        results = asyncio.run(exercise())
+        for parent, ctx in results:
+            with restore_context(ctx):
+                child = record_call(provider="fake")
+            assert ctx["current_call_id"] == parent.id
+            assert child.parent_call_id == parent.id
+            assert child.run_id == parent.run_id
+
+
+def test_capture_bridges_awaited_children_without_crossing_sibling_branches():
+    async def exercise():
+        parent = record_call(provider="fake")
+        child = await asyncio.create_task(async_record())
+        assert child.parent_call_id == parent.id
+        assert capture_context()["current_call_id"] == child.id
+
+    async def async_record():
+        return record_call(provider="fake")
+
+    asyncio.run(exercise())
+
+
 
 def test_restored_late_worker_does_not_mutate_the_finished_parent_run():
     def worker(ctx):
@@ -285,6 +337,24 @@ def test_lazy_run_rolls_over_after_project_reconfiguration(reconfigure):
     runs = {run.id: run for run in get_store().runs()}
     assert runs[first.run_id].project == "test"
     assert runs[second.run_id].project == "another-project"
+
+@pytest.mark.parametrize("rollover", ["project", "store"])
+def test_existing_contexts_clear_parents_after_default_run_rollover(tmp_path, rollover):
+    contexts = [Context(), Context()]
+    old_calls = [ctx.run(record_call, provider="fake") for ctx in contexts]
+    assert old_calls[0].run_id == old_calls[1].run_id
+
+    if rollover == "project":
+        config.get_config().project = "replacement-project"
+    else:
+        config.get_config().db_path = tmp_path / "replacement.db"
+        reset_store()
+
+    new_calls = [ctx.run(record_call, provider="fake") for ctx in contexts]
+    assert new_calls[0].run_id == new_calls[1].run_id
+    assert new_calls[0].run_id != old_calls[0].run_id
+    assert all(call.parent_call_id is None for call in new_calls)
+
 
 
 def test_lazy_run_rolls_over_when_the_configured_store_is_reopened(tmp_path):

@@ -47,6 +47,8 @@ Patching is atomic per provider: if an SDK target is missing or cannot be
 replaced, its other targets keep their original methods. Repeated
 instrumentation leaves existing wrappers in place, so a completion is recorded
 once even after an instrumentation retry.
+LiteLLM module calls support positional model/messages and later positional
+arguments (such as timeout), including model/prompt overrides and capture.
 
 ## Stages and concurrent runs
 
@@ -59,7 +61,8 @@ previous registration. Reloading the same module/qualified name does not warn.
 Without an explicit run, the first recorded call lazily creates one process-wide
 run, shared by concurrent asyncio tasks and worker threads. Changing the
 configured project or reopening the store starts a new process-wide run on its
-next use, leaving existing run rows intact. Use
+next use, leaving existing run rows intact and clearing each context's old
+parent-call ancestry when it observes the replacement run. Use
 `praximetry.runtime.run_context(...)` to isolate separate requests or trials;
 explicit runs take precedence over the process-wide run.
 
@@ -67,9 +70,13 @@ Asyncio tasks inherit the active context. Across thread/executor boundaries,
 pass `praximetry.runtime.capture_context()` to the worker and enter
 `restore_context(snapshot)` there to preserve the explicit run, stage, parent
 call and model/prompt overrides. In the same process, restored contexts share
-an unfinished Run, including its latest call and metadata. Unknown or finished
-run IDs create a detached local Run with the captured ID, so late workers do not
-mutate a finalized parent Run.
+an unfinished Run, including its latest call and metadata. Context capture
+follows the caller's own branch (including children it dispatched), not the
+latest call from an unrelated concurrent branch. When the caller has no local
+ancestry, capture uses the shared run's latest call.
+Unknown or finished run IDs create a detached local Run with the captured ID,
+so late workers do not mutate a finalized parent Run or replace its finalized
+metadata in cloud uploads.
 Snapshots containing a `prompt_transform` callable preserve it by reference
 and cannot be JSON-serialized as-is.
 

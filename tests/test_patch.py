@@ -136,6 +136,47 @@ def test_litellm_positional_call_accepts_model_override(monkeypatch):
 
     assert seen == [("gpt-4o-mini", messages, {})]
 
+@pytest.mark.parametrize("is_async", [False, True])
+@pytest.mark.parametrize("override", [False, True])
+def test_litellm_preserves_third_positional_argument(monkeypatch, is_async, override):
+    from praximetry.runtime import override_context
+
+    seen = []
+
+    def completion(model, messages=None, timeout=None, **kwargs):
+        seen.append((model, messages, timeout, kwargs))
+        return _oai_resp("out", 5, 2)
+
+    async def acompletion(model, messages=None, timeout=None, **kwargs):
+        return completion(model, messages, timeout, **kwargs)
+
+    host = NS(completion=acompletion if is_async else completion)
+    spec = ProviderSpec(
+        name="litellm",
+        owner=lambda: (host, host),
+        targets=[PatchTarget("completion", is_async=is_async, self_less=True)],
+        adapter=ADAPTERS["litellm"],
+    )
+    monkeypatch.setattr(P, "_patched", set())
+    assert P._patch(spec)
+    messages = [{"role": "user", "content": "hi"}]
+    transformed = [{"role": "user", "content": "transformed"}]
+    with override_context(
+        model="gpt-4o-mini" if override else None,
+        prompt_transform=(lambda _: transformed) if override else None,
+    ):
+        result = host.completion("gpt-4o", messages, 30)
+        if is_async:
+            asyncio.run(result)
+
+    expected_model = "gpt-4o-mini" if override else "gpt-4o"
+    expected_messages = transformed if override else messages
+    assert seen == [(expected_model, expected_messages, 30, {})]
+    call = get_store().calls()[0]
+    assert call.model == expected_model
+    assert call.messages == expected_messages
+
+
 
 def test_sync_buffered_records_normalized_fields():
     create = P._instrument(

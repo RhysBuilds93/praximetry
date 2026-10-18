@@ -7,6 +7,7 @@ import logging
 import threading
 import time
 from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from typing import Any, ContextManager
 from collections.abc import Callable
 from weakref import WeakValueDictionary
@@ -23,11 +24,18 @@ _current_run: contextvars.ContextVar[Run | None] = contextvars.ContextVar("run",
 _stage_stack: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
     "stage_stack", default=()
 )
-# Most recently recorded call; asyncio.gather/create_task copy it so fan-out calls
-# inherit the same parent -- but only forward, from parent to child at Task-creation
-# time. A child Task's own record_call() writes never flow back to whichever task
-# awaits it, so capture_context() reads Run.last_call_id (below) to bridge that gap.
-_current_call: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+
+
+@dataclass
+class _CallContext:
+    run_id: str
+    call_id: str
+    child: _CallContext | None = None
+
+
+# Tasks inherit the same node, but each record forks a new local node. The child
+# link bridges awaited work back to its caller without linking sibling branches.
+_current_call: contextvars.ContextVar[_CallContext | None] = contextvars.ContextVar(
     "current_call", default=None
 )
 _overrides: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
@@ -40,6 +48,7 @@ _default_run: Run | None = None
 _default_run_store: Store | None = None
 _run_lock = threading.Lock()
 _live_runs: WeakValueDictionary[str, Run] = WeakValueDictionary()
+_call_contexts: WeakValueDictionary[str, _CallContext] = WeakValueDictionary()
 
 STAGE_REGISTRY: dict[str, Callable[..., Any]] = {}  # so eval/optimize can re-run stages by name
 
@@ -67,6 +76,7 @@ def current_run(create: bool = True) -> Run | None:
         return run
     with _run_lock:
         if _default_run is None and not create:
+            _current_call.set(None)
             return None
         cfg = get_config()
         store = get_store()
@@ -75,12 +85,16 @@ def current_run(create: bool = True) -> Run | None:
         ):
             _default_run = None
             _default_run_store = None
-            _current_call.set(None)
+        parent = _current_call.get()
         if _default_run is None and create:
             _default_run = Run(project=cfg.project)
             _default_run_store = store
             _live_runs[_default_run.id] = _default_run
             _save_run(_default_run)
+        if parent is not None and (
+            _default_run is None or parent.run_id != _default_run.id
+        ):
+            _current_call.set(None)
         return _default_run
 
 
@@ -128,11 +142,22 @@ def capture_context() -> dict[str, Any]:
     prompt_transform callable is preserved by reference, not JSON-serializable.
     """
     run = current_run(create=False)
+    with _run_lock:
+        parent = _current_call.get()
+        if parent is not None:
+            latest = parent
+            while latest.child is not None:
+                latest = latest.child
+            if latest is not parent:
+                parent.child = latest
+            call_id = latest.call_id
+        else:
+            call_id = run.last_call_id if run else None
     return {
         "run_id": run.id if run else None,
         "run_project": run.project if run else None,
         "stage_stack": _stage_stack.get(),
-        "current_call_id": run.last_call_id if run else None,
+        "current_call_id": call_id,
         "overrides": dict(overrides) if (overrides := _overrides.get()) is not None else None,
     }
 
@@ -144,9 +169,11 @@ def restore_context(ctx: dict[str, Any] | None):
         yield
         return
     run = None
+    parent = None
     if run_id := ctx.get("run_id"):
         with _run_lock:
             run = _live_runs.get(run_id)
+            share_parent = run is not None and run.ended_at is None
             if run is None or run.ended_at is not None:
                 run = Run(
                     id=run_id,
@@ -154,9 +181,14 @@ def restore_context(ctx: dict[str, Any] | None):
                     last_call_id=ctx.get("current_call_id"),
                 )
                 _live_runs[run.id] = run
+            if call_id := ctx.get("current_call_id"):
+                parent = _call_contexts.get(call_id) if share_parent else None
+                if parent is None or parent.run_id != run.id:
+                    parent = _CallContext(run.id, call_id)
+                    _call_contexts[call_id] = parent
     run_token = _current_run.set(run) if run is not None else None
     stage_token = _stage_stack.set(tuple(ctx.get("stage_stack") or ()))
-    call_token = _current_call.set(ctx.get("current_call_id"))
+    call_token = _current_call.set(parent)
     overrides = ctx.get("overrides")
     override_token = _overrides.set(dict(overrides) if overrides is not None else None)
     try:
@@ -198,6 +230,7 @@ def reset_runtime() -> None:
         _default_run = None
         _default_run_store = None
         _live_runs.clear()
+        _call_contexts.clear()
     _current_run.set(None)
     _stage_stack.set(())
     _current_call.set(None)
@@ -211,7 +244,8 @@ def record_call(call: Call | None = None, **kwargs: Any) -> Call:
     if call is None:
         run = current_run()
         kwargs.setdefault("stage", current_stage())
-        kwargs.setdefault("parent_call_id", _current_call.get())
+        parent = _current_call.get()
+        kwargs.setdefault("parent_call_id", parent.call_id if parent else None)
         call = Call(run_id=run.id, **kwargs)
     else:
         run = current_run(create=False)
@@ -220,8 +254,13 @@ def record_call(call: Call | None = None, **kwargs: Any) -> Call:
         if run is not None:
             cloud_sync.note_run(run)
         cloud_sync.enqueue(call)
-    _current_call.set(call.id)
-    if run is not None:
-        with _run_lock:
+    with _run_lock:
+        parent = _current_call.get()
+        local = _CallContext(call.run_id, call.id)
+        if parent is not None and parent.run_id == call.run_id:
+            parent.child = local
+        _call_contexts[call.id] = local
+        _current_call.set(local)
+        if run is not None:
             run.last_call_id = call.id
     return call

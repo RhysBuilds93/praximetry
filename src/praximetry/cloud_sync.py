@@ -49,9 +49,11 @@ _last_drop_log = 0.0
 
 
 def note_run(run: Run) -> None:
-    """Register (or refresh) a Run so a later flush can resolve the batch of
-    calls sharing its run_id. Call this wherever a Run is created/updated."""
-    _run_cache[run.id] = run
+    """Register a Run without letting detached workers replace finalized metadata."""
+    with _lock:
+        cached = _run_cache.get(run.id)
+        if cached is None or cached.ended_at is None:
+            _run_cache[run.id] = run
 
 
 def set_redaction_hook(fn: Callable[[Call], Call] | None) -> None:
