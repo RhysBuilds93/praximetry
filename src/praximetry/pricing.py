@@ -82,10 +82,13 @@ def _lookup(model: str) -> tuple[float, float] | None:
     return PRICING[known] if known else None
 
 
-def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
+def cost_usd(model: str, input_tokens: int | None, output_tokens: int | None) -> float:
+    """Compute USD cost, treating missing or negative token counts as zero."""
     p = _lookup(model)
     if not p:
         return 0.0
+    input_tokens = max(input_tokens or 0, 0)
+    output_tokens = max(output_tokens or 0, 0)
     return input_tokens * p[0] / 1e6 + output_tokens * p[1] / 1e6
 
 

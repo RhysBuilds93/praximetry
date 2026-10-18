@@ -7,6 +7,8 @@ import logging
 import sqlite3
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,8 @@ logger = logging.getLogger(__name__)
 # Single source of truth for table shape: both the initial CREATE TABLE and the
 # startup migration (below) are generated from this, so a column added here is
 # picked up on existing on-disk databases with no new migration code.
+# Evolution is add-column only: no schema version, constraint changes, renames,
+# or removals. Those changes need an explicit migration rather than this helper.
 _TABLES: dict[str, list[tuple[str, str]]] = {
     "runs": [
         ("id", "TEXT PRIMARY KEY"),
@@ -79,6 +83,9 @@ _TABLES: dict[str, list[tuple[str, str]]] = {
 _INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_calls_run ON calls(run_id)",
     "CREATE INDEX IF NOT EXISTS idx_calls_stage ON calls(stage)",
+    "CREATE INDEX IF NOT EXISTS idx_calls_ts ON calls(ts)",
+    "CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs(started_at)",
+    "CREATE INDEX IF NOT EXISTS idx_eval_results_experiment ON eval_results(experiment_id)",
 ]
 
 _CREATE_TABLES = [
@@ -137,13 +144,14 @@ def _insert_sql(table: str) -> str:
     )
 
 
-def _warn_if_truncated(what: str, rows: list, limit: int) -> None:
-    if len(rows) >= limit:
+def _trim_if_truncated(what: str, rows: list, limit: int) -> None:
+    if 0 <= limit < len(rows):
         logger.warning(
             "store.%s hit limit=%d; older rows omitted — pass a higher limit if you need them",
             what,
             limit,
         )
+        del rows[limit:]
 
 
 class Store:
@@ -153,10 +161,13 @@ class Store:
             self.db_path = self.db_path.resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
+        self._connections: list[sqlite3.Connection] = []
+        self._connections_lock = threading.Lock()
+        self._closed = False
         c = self._conn()
         # The write lock makes check-then-ALTER atomic across processes opening at once.
-        c.execute("BEGIN IMMEDIATE")
         try:
+            c.execute("BEGIN IMMEDIATE")
             for statement in _CREATE_TABLES:
                 c.execute(statement)
             self._migrate(c)
@@ -165,6 +176,7 @@ class Store:
                 c.execute(statement)
         except BaseException:
             c.rollback()
+            self.close()
             raise
         c.commit()
 
@@ -180,20 +192,52 @@ class Store:
             existing = {row[1] for row in c.execute(f"PRAGMA table_info({table})").fetchall()}
             for col, type_ in columns:
                 if col not in existing:
-                    c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {type_.split()[0]}")
+                    if len(type_.split()) != 1:
+                        raise ValueError(f"{table}.{col}: migrate constraints explicitly")
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {type_}")
 
     def _conn(self) -> sqlite3.Connection:
-        conn = getattr(self._local, "conn", None)
-        if conn is None:
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row
-            _enable_wal(conn)
-            self._local.conn = conn
-        return conn
+        with self._connections_lock:
+            if self._closed:
+                raise sqlite3.ProgrammingError("Cannot operate on a closed store.")
+            conn = getattr(self._local, "conn", None)
+            if conn is None:
+                # Connections remain thread-local for use; disabling SQLite's
+                # affinity check lets close() release them from any thread.
+                conn = sqlite3.connect(self.db_path, check_same_thread=False)
+                try:
+                    conn.row_factory = sqlite3.Row
+                    _enable_wal(conn)
+                    conn.execute("PRAGMA synchronous=NORMAL")
+                except BaseException:
+                    conn.close()
+                    raise
+                self._connections.append(conn)
+                self._local.conn = conn
+            return conn
+
+    def close(self) -> None:
+        """Close every thread's connection. The store must no longer be in use."""
+        with self._connections_lock:
+            self._closed = True
+            for conn in self._connections:
+                conn.close()
+            self._connections.clear()
+
+    @contextmanager
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
+        c = self._conn()
+        if c.in_transaction:
+            # Batch ingest owns the transaction; individual saves must not commit it.
+            yield c
+        else:
+            with c:
+                c.execute("BEGIN")
+                yield c
 
     # -- writes ------------------------------------------------------------
     def save_run(self, run: Run) -> None:
-        with self._conn() as c:
+        with self._transaction() as c:
             c.execute(
                 _insert_sql("runs"),
                 (
@@ -208,7 +252,7 @@ class Store:
             )
 
     def save_call(self, call: Call) -> None:
-        with self._conn() as c:
+        with self._transaction() as c:
             c.execute(
                 _insert_sql("calls"),
                 (
@@ -235,7 +279,7 @@ class Store:
             )
 
     def save_eval_result(self, r: EvalResult) -> None:
-        with self._conn() as c:
+        with self._transaction() as c:
             c.execute(
                 _insert_sql("eval_results"),
                 (
@@ -253,7 +297,7 @@ class Store:
             )
 
     def save_experiment(self, e: Experiment) -> None:
-        with self._conn() as c:
+        with self._transaction() as c:
             c.execute(
                 _insert_sql("experiments"),
                 (
@@ -278,9 +322,9 @@ class Store:
             q += " WHERE project=?"
             args.append(project)
         q += " ORDER BY started_at DESC LIMIT ?"
-        args.append(limit)
+        args.append(limit + 1 if limit >= 0 else limit)
         rows = self._conn().execute(q, args).fetchall()
-        _warn_if_truncated("runs", rows, limit)
+        _trim_if_truncated("runs", rows, limit)
         return [self._row_to_run(r) for r in rows]
 
     @staticmethod
@@ -314,9 +358,9 @@ class Store:
         if conds:
             q += " WHERE " + " AND ".join(conds)
         q += " ORDER BY calls.ts DESC LIMIT ?"
-        args.append(limit)
+        args.append(limit + 1 if limit >= 0 else limit)
         rows = self._conn().execute(q, args).fetchall()
-        _warn_if_truncated("calls", rows, limit)
+        _trim_if_truncated("calls", rows, limit)
         return [self._row_to_call(r) for r in rows]
 
     @staticmethod
@@ -390,34 +434,40 @@ class Store:
 
     # -- bulk ingest (used by the remote collector) ------------------------
     def ingest(self, payload: dict[str, Any]) -> dict[str, int]:
-        """Write a batch of serialized runs/calls/experiments/eval_results."""
+        """Write a batch atomically; a bad row rolls back the entire batch."""
         counts = {}
-        for run in payload.get("runs", []):
-            self.save_run(Run(**run))
-        counts["runs"] = len(payload.get("runs", []))
-        for call in payload.get("calls", []):
-            self.save_call(Call(**call))
-        counts["calls"] = len(payload.get("calls", []))
-        for e in payload.get("experiments", []):
-            self.save_experiment(Experiment(**e))
-        counts["experiments"] = len(payload.get("experiments", []))
-        for r in payload.get("eval_results", []):
-            self.save_eval_result(EvalResult(**r))
-        counts["eval_results"] = len(payload.get("eval_results", []))
+        with self._transaction():
+            for run in payload.get("runs", []):
+                self.save_run(Run(**run))
+            counts["runs"] = len(payload.get("runs", []))
+            for call in payload.get("calls", []):
+                self.save_call(Call(**call))
+            counts["calls"] = len(payload.get("calls", []))
+            for e in payload.get("experiments", []):
+                self.save_experiment(Experiment(**e))
+            counts["experiments"] = len(payload.get("experiments", []))
+            for r in payload.get("eval_results", []):
+                self.save_eval_result(EvalResult(**r))
+            counts["eval_results"] = len(payload.get("eval_results", []))
         return counts
 
 
 _store: Store | None = None
+_store_lock = threading.Lock()
 
 
 def get_store() -> Store:
     global _store
-    if _store is None:
-        _store = Store()
-    return _store
+    with _store_lock:
+        if _store is None:
+            _store = Store()
+        return _store
 
 
 def reset_store() -> None:
-    """Testing hook: force re-open against current config."""
+    """Close the shared store so the next access uses the current config."""
     global _store
-    _store = None
+    with _store_lock:
+        if _store is not None:
+            _store.close()
+        _store = None

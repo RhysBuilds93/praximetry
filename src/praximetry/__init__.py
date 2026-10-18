@@ -25,6 +25,7 @@ from .otel import instrument_otel, record_spans
 from .pricing import register_pricing
 from .runtime import current_run, record_call, run_context
 from .trulens import record_trulens_record
+from .store import reset_store
 
 __version__ = "0.2.0"
 __all__ = [
@@ -51,6 +52,8 @@ def init(
 ) -> list[str]:
     """Initialize praximetry. Returns list of auto-instrumented providers.
 
+    Reinitializing with a different `db_path` closes the previous store so the new path takes effect.
+
     `cloud`: whether to also push recorded calls to the hosted /api/traces
     route in the background (see `praximetry.cloud_sync`).
       - None (default): auto-enable only if PRAXIMETRY_API_KEY is set in the
@@ -64,7 +67,10 @@ def init(
     if db_path:
         cfg.db_path = Path(db_path)
     cfg.auto_instrument = auto_instrument_sdks
+    previous_db_path = get_config().db_path
     set_config(cfg)
+    if cfg.db_path != previous_db_path:
+        reset_store()
 
     want_cloud = cloud if cloud is not None else bool(os.environ.get("PRAXIMETRY_API_KEY"))
     if want_cloud:

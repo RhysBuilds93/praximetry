@@ -413,8 +413,10 @@ def test_lazy_run_rolls_over_when_the_configured_store_is_reopened(tmp_path):
     assert second.parent_call_id is None
     assert [run.id for run in get_store().runs()] == [second.run_id]
     assert [call.id for call in get_store().calls()] == [second.id]
-    assert [run.id for run in first_store.runs()] == [first.run_id]
-    assert [call.id for call in first_store.calls()] == [first.id]
+    old_store = Store(first_store.db_path)
+    assert [run.id for run in old_store.runs()] == [first.run_id]
+    assert [call.id for call in old_store.calls()] == [first.id]
+    old_store.close()
 
 
 @pytest.mark.parametrize("fail_on", [{1}, {2}, {1, 2}])
