@@ -47,6 +47,56 @@ Patching is atomic per provider: if an SDK target is missing or cannot be
 replaced, its other targets keep their original methods. Repeated
 instrumentation leaves existing wrappers in place, so a completion is recorded
 once even after an instrumentation retry.
+LiteLLM module calls support positional model/messages and later positional
+arguments (such as timeout), including model/prompt overrides and capture.
+
+## Stages and concurrent runs
+
+Bare `@px.stage` and `@px.stage("")` use the callable's `__name__`, or its type
+name when no function name is available (`partial` for `functools.partial`,
+for example). Choose explicit, unique names for unrelated stages: registering
+a different module/qualified function name logs a warning and replaces the
+previous registration. Reloading the same module/qualified name does not warn.
+
+Without an explicit run, the first recorded call lazily creates one process-wide
+run, shared by concurrent asyncio tasks and worker threads. Changing the
+configured project or reopening the store starts a new process-wide run on its
+next use, leaving existing run rows intact and clearing each context's old
+parent-call ancestry when it observes the replacement run. Use
+`praximetry.runtime.run_context(...)` to isolate separate requests or trials;
+explicit runs take precedence over the process-wide run.
+
+Asyncio tasks inherit the active context. Across thread/executor boundaries,
+pass `praximetry.runtime.capture_context()` to the worker and enter
+`restore_context(snapshot)` there to preserve the explicit run, stage, parent
+call and model/prompt overrides. In the same process, restored contexts share
+an unfinished Run, including its latest call and metadata, but each restoration
+starts an independent ancestry branch. Context capture follows the caller's own
+branch (including children it dispatched), not a sibling restored worker or
+unrelated concurrent branch. When the caller has no local ancestry, capture uses
+the shared run's latest call. Capturing a snapshot does not trigger run rollover
+or clear local ancestry after configuration changes; the next recorded call does.
+Unknown or finished run IDs create a detached local Run with the captured ID,
+so late workers do not mutate a finalized parent Run or replace its finalized
+metadata in cloud uploads.
+Snapshots containing a `prompt_transform` callable preserve it by reference
+and cannot be JSON-serialized as-is.
+
+Run persistence failures are logged with a traceback without preventing entry
+to `run_context` or masking an exception from its body. Manual
+`px.record_call(**kwargs)` still validates its Call fields when recording is
+disabled; disabling recording skips persistence, not input validation.
+
+Raw OpenAI/Anthropic responses are parsed only for recognized SDK
+`LegacyAPIResponse`/synchronous `APIResponse` wrappers. A response model's own
+`parse` field or method is left untouched.
+
+The LangChain callback handler retains the model from invocation parameters
+(preferred over serialized defaults), including for failed calls. Each handler
+keeps at most 1024 unfinished LLM starts so abandoned runs cannot accumulate
+without bound. Older starts are evicted first; their late completions still
+record, but lack the evicted prompt/model and original latency start time.
+
 
 ## What this is (and isn't)
 

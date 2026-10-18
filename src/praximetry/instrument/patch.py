@@ -23,6 +23,12 @@ from .wrap import AsyncStreamWrapper, SyncStreamWrapper
 logger = logging.getLogger(__name__)
 
 _patched: set[str] = set()
+_RAW_RESPONSE_TYPES = {
+    ("openai._legacy_response", "LegacyAPIResponse"),
+    ("anthropic._legacy_response", "LegacyAPIResponse"),
+    ("openai._response", "APIResponse"),
+    ("anthropic._response", "APIResponse"),
+}
 
 # Pre-flight capture hook (PRA-66): when set, patched create()/acreate()
 # wrappers call this INSTEAD of the real `original(...)`, so
@@ -34,13 +40,15 @@ capture_hook: Hook[Callable[[dict], Any]] = Hook()
 
 
 def _unwrap_for_parsing(resp: Any) -> Any:
-    """LangChain (and any caller using `with_raw_response`) gets back a
-    LegacyAPIResponse wrapper with no `.usage`/`.choices` -- only its parsed
-    `.parse()` result has those. `.parse()` is cached, so calling it here
-    doesn't disturb the caller's own later `.parse()` call on the same resp.
+    """Unwrap known SDK raw responses via their cached synchronous parse().
+
+    Match the defining class in the MRO without importing optional SDKs. A
+    response model's own `parse` method/field is not an SDK wrapper.
     """
-    parse = getattr(resp, "parse", None)
-    return parse() if callable(parse) else resp
+    for cls in type(resp).__mro__:
+        if (cls.__module__, cls.__name__) in _RAW_RESPONSE_TYPES:
+            return resp.parse()
+    return resp
 
 
 @contextmanager
@@ -83,19 +91,6 @@ def _apply_overrides(kwargs: dict[str, Any], messages_key: str) -> dict[str, Any
             ]
     return kwargs
 
-def _normalize_self_less_args(
-    args: tuple[Any, ...], kwargs: dict[str, Any], messages_key: str
-) -> tuple[tuple[Any, ...], dict[str, Any]]:
-    """Expose positional model/messages to instrumentation before calling a module API."""
-    if not args or "model" in kwargs:
-        return args, kwargs
-    kwargs = dict(kwargs)
-    kwargs["model"] = args[0]
-    args = args[1:]
-    if args and messages_key not in kwargs:
-        kwargs[messages_key] = args[0]
-        args = args[1:]
-    return args, kwargs
 
 
 def _record(
@@ -135,9 +130,20 @@ def _make_stream_done(provider: str, model: str, messages: list, adapter, t0: fl
 
 
 
-def _prepare_call(kwargs: dict[str, Any], messages_key: str, provider: str, adapter):
-    """Shared pre-call setup for the sync/async create() wrappers: apply
-    overrides and resolve model/messages/capture-hook-payload."""
+def _prepare_call(
+    args: tuple[Any, ...], kwargs: dict[str, Any], messages_key: str,
+    provider: str, adapter, self_less: bool,
+):
+    """Apply overrides/capture while preserving module APIs' positional binding."""
+    positional = {
+        index: key
+        for index, key in enumerate(("model", messages_key))
+        if self_less and index < len(args) and key not in kwargs
+    }
+    if positional:
+        kwargs = dict(kwargs)
+        for index, key in positional.items():
+            kwargs[key] = args[index]
     kwargs = _apply_overrides(kwargs, messages_key)
     model = kwargs.get("model", "unknown")
     try:
@@ -155,7 +161,12 @@ def _prepare_call(kwargs: dict[str, Any], messages_key: str, provider: str, adap
         if capture_hook.fn is not None
         else None
     )
-    return kwargs, model, messages, capture_payload
+    if positional:
+        args = tuple(
+            kwargs.pop(positional[index]) if index in positional else value
+            for index, value in enumerate(args)
+        )
+    return args, kwargs, model, messages, capture_payload
 
 
 def _finish_call(provider: str, model: str, messages: list, adapter, resp: Any, t0: float) -> Any:
@@ -182,10 +193,8 @@ def _instrument(
     if is_async:
 
         async def acreate(self: Any, *args: Any, **kwargs: Any) -> Any:
-            if self_less:
-                args, kwargs = _normalize_self_less_args(args, kwargs, messages_key)
-            kwargs, model, messages, capture_payload = _prepare_call(
-                kwargs, messages_key, provider, adapter
+            args, kwargs, model, messages, capture_payload = _prepare_call(
+                args, kwargs, messages_key, provider, adapter, self_less
             )
             if capture_payload is not None:
                 return capture_hook.fn(capture_payload)
@@ -195,7 +204,7 @@ def _instrument(
                     kwargs.setdefault("stream_options", {"include_usage": True})
                 try:
                     resp = await original(self, *args, **kwargs)
-                except Exception as e:  # noqa: BLE001
+                except Exception as e:
                     _record(provider, model, messages, NormalizedOutput(), t0, str(e))
                     raise
                 return AsyncStreamWrapper(
@@ -207,7 +216,7 @@ def _instrument(
 
             try:
                 resp = await original(self, *args, **kwargs)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 _record(provider, model, messages, NormalizedOutput(), t0, str(e))
                 raise
             return _finish_call(provider, model, messages, adapter, resp, t0)
@@ -216,10 +225,8 @@ def _instrument(
         return acreate
 
     def create(self: Any, *args: Any, **kwargs: Any) -> Any:
-        if self_less:
-            args, kwargs = _normalize_self_less_args(args, kwargs, messages_key)
-        kwargs, model, messages, capture_payload = _prepare_call(
-            kwargs, messages_key, provider, adapter
+        args, kwargs, model, messages, capture_payload = _prepare_call(
+            args, kwargs, messages_key, provider, adapter, self_less
         )
         if capture_payload is not None:
             return capture_hook.fn(capture_payload)
@@ -229,7 +236,7 @@ def _instrument(
                 kwargs.setdefault("stream_options", {"include_usage": True})
             try:
                 resp = original(self, *args, **kwargs)
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 _record(provider, model, messages, NormalizedOutput(), t0, str(e))
                 raise
             return SyncStreamWrapper(
@@ -239,7 +246,7 @@ def _instrument(
 
         try:
             resp = original(self, *args, **kwargs)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             _record(provider, model, messages, NormalizedOutput(), t0, str(e))
             raise
         return _finish_call(provider, model, messages, adapter, resp, t0)
