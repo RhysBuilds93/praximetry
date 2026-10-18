@@ -9,7 +9,7 @@ import weakref
 from contextvars import Context
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from threading import Barrier
+from threading import Barrier, Event
 
 import pytest
 from pydantic import ValidationError
@@ -153,6 +153,51 @@ def test_restored_worker_updates_the_shared_run_and_last_call_bridge():
     saved_run = get_store().runs()[0]
     assert saved_run.ended_at == run.ended_at
     assert saved_run.metadata == {"worker": "finished"}
+
+def test_restored_workers_keep_independent_capture_ancestry():
+    both_restored = Barrier(2)
+    recorded = Event()
+
+    def one(ctx):
+        with restore_context(ctx):
+            both_restored.wait(timeout=5)
+            child = record_call(provider="fake")
+            recorded.set()
+            return child
+
+    def two(ctx):
+        with restore_context(ctx):
+            both_restored.wait(timeout=5)
+            assert recorded.wait(timeout=5)
+            snapshot = capture_context()
+            return snapshot, record_call(provider="fake")
+
+    with run_context("parent"):
+        parent = record_call(provider="fake")
+        ctx = capture_context()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            one_result = pool.submit(one, ctx)
+            two_result = pool.submit(two, ctx)
+            first = one_result.result()
+            snapshot, second = two_result.result()
+        assert snapshot["current_call_id"] == parent.id
+        assert first.parent_call_id == second.parent_call_id == parent.id
+        assert capture_context()["current_call_id"] == second.id
+
+
+def test_capture_during_reconfiguration_does_not_roll_over_the_default_run():
+    first = record_call(provider="fake")
+    original_project = config.get_config().project
+    config.get_config().project = "replacement"
+    snapshot = capture_context()
+    config.get_config().project = original_project
+
+    second = record_call(provider="fake")
+    assert snapshot["run_id"] == first.run_id
+    assert snapshot["current_call_id"] == first.id
+    assert second.run_id == first.run_id
+    assert second.parent_call_id == first.id
+
 
 @pytest.mark.parametrize("explicit_run", [False, True])
 def test_interleaved_tasks_capture_their_own_branch_parent(explicit_run):

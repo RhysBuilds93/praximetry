@@ -70,10 +70,12 @@ Asyncio tasks inherit the active context. Across thread/executor boundaries,
 pass `praximetry.runtime.capture_context()` to the worker and enter
 `restore_context(snapshot)` there to preserve the explicit run, stage, parent
 call and model/prompt overrides. In the same process, restored contexts share
-an unfinished Run, including its latest call and metadata. Context capture
-follows the caller's own branch (including children it dispatched), not the
-latest call from an unrelated concurrent branch. When the caller has no local
-ancestry, capture uses the shared run's latest call.
+an unfinished Run, including its latest call and metadata, but each restoration
+starts an independent ancestry branch. Context capture follows the caller's own
+branch (including children it dispatched), not a sibling restored worker or
+unrelated concurrent branch. When the caller has no local ancestry, capture uses
+the shared run's latest call. Capturing a snapshot does not trigger run rollover
+or clear local ancestry after configuration changes; the next recorded call does.
 Unknown or finished run IDs create a detached local Run with the captured ID,
 so late workers do not mutate a finalized parent Run or replace its finalized
 metadata in cloud uploads.

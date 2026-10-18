@@ -31,6 +31,7 @@ class _CallContext:
     run_id: str
     call_id: str
     child: _CallContext | None = None
+    bridge: _CallContext | None = None
 
 
 # Tasks inherit the same node, but each record forks a new local node. The child
@@ -141,10 +142,12 @@ def capture_context() -> dict[str, Any]:
     Run identity is resolved locally without retaining it in the snapshot. A
     prompt_transform callable is preserved by reference, not JSON-serializable.
     """
-    run = current_run(create=False)
     with _run_lock:
+        # Capturing snapshots must not roll over a default run or clear ancestry
+        # merely because configuration changed; recording handles that cutover.
+        run = _current_run.get() or _default_run
         parent = _current_call.get()
-        if parent is not None:
+        if parent is not None and run is not None and parent.run_id == run.id:
             latest = parent
             while latest.child is not None:
                 latest = latest.child
@@ -173,7 +176,7 @@ def restore_context(ctx: dict[str, Any] | None):
     if run_id := ctx.get("run_id"):
         with _run_lock:
             run = _live_runs.get(run_id)
-            share_parent = run is not None and run.ended_at is None
+            shared_run = run is not None and run.ended_at is None
             if run is None or run.ended_at is not None:
                 run = Run(
                     id=run_id,
@@ -182,10 +185,12 @@ def restore_context(ctx: dict[str, Any] | None):
                 )
                 _live_runs[run.id] = run
             if call_id := ctx.get("current_call_id"):
-                parent = _call_contexts.get(call_id) if share_parent else None
-                if parent is None or parent.run_id != run.id:
-                    parent = _CallContext(run.id, call_id)
-                    _call_contexts[call_id] = parent
+                # A restored branch owns its child link. Publish completed work
+                # back to the original caller, never through a sibling's root.
+                origin = _call_contexts.get(call_id) if shared_run else None
+                if origin is not None and origin.run_id != run.id:
+                    origin = None
+                parent = _CallContext(run.id, call_id, bridge=origin)
     run_token = _current_run.set(run) if run is not None else None
     stage_token = _stage_stack.set(tuple(ctx.get("stage_stack") or ()))
     call_token = _current_call.set(parent)
@@ -259,6 +264,8 @@ def record_call(call: Call | None = None, **kwargs: Any) -> Call:
         local = _CallContext(call.run_id, call.id)
         if parent is not None and parent.run_id == call.run_id:
             parent.child = local
+            if parent.bridge is not None:
+                parent.bridge.child = local
         _call_contexts[call.id] = local
         _current_call.set(local)
         if run is not None:

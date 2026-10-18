@@ -175,7 +175,10 @@ def _drain_and_push() -> None:
     for run_id, group in by_run.items():
         # A hand-built Call(run_id=...) whose Run never went through note_run
         # still carries enough to push; synthesize a bare Run rather than drop it.
-        run = _run_cache.get(run_id) or Run(id=run_id)
+        with _lock:
+            run = _run_cache.get(run_id)
+        if run is None:
+            run = Run(id=run_id)
         try:
             hook = redaction_hook.fn
             payload = [hook(c) if hook else c for c in group]
