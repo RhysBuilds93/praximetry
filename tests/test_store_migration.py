@@ -60,6 +60,8 @@ def test_index_on_late_added_column_does_not_block_migration(tmp_path: Path) -> 
     db_path = tmp_path / "old.db"
     conn = sqlite3.connect(db_path)
     conn.execute("CREATE TABLE calls (id TEXT PRIMARY KEY, ts REAL)")
+    conn.execute("CREATE TABLE runs (id TEXT PRIMARY KEY, started_at REAL)")
+    conn.execute("CREATE TABLE eval_results (id TEXT PRIMARY KEY, ts REAL)")
     conn.commit()
     conn.close()
 
@@ -67,6 +69,17 @@ def test_index_on_late_added_column_does_not_block_migration(tmp_path: Path) -> 
 
     cols = {row[1] for row in store._conn().execute("PRAGMA table_info(calls)").fetchall()}
     assert {"run_id", "stage"} <= cols
+    for table, column in [
+        ("calls", "ts"),
+        ("runs", "started_at"),
+        ("eval_results", "experiment_id"),
+    ]:
+        indexes = store._conn().execute(f"PRAGMA index_list({table})").fetchall()
+        indexed_columns = [
+            [row[2] for row in store._conn().execute(f"PRAGMA index_info({index[1]})")]
+            for index in indexes
+        ]
+        assert [column] in indexed_columns
 
 
 def test_concurrent_opens_of_an_unmigrated_db(tmp_path: Path) -> None:
