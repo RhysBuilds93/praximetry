@@ -6,6 +6,7 @@ is the proof that CaptureMechanism generalizes beyond SDK-method-patching.
 from __future__ import annotations
 
 import time
+from threading import Lock
 from typing import Any
 from uuid import UUID
 
@@ -17,12 +18,32 @@ from .. import pricing
 from .capture import CaptureMechanism
 from .reasoning_patterns import split_embedded_reasoning
 
+_MAX_PENDING_RUNS = 1024
+
+
+def _model_name(serialized: dict, kwargs: dict) -> str:
+    # Invocation parameters reflect overrides; serialized kwargs may hold defaults.
+    for source in (
+        kwargs.get("invocation_params") or {}, kwargs, serialized.get("kwargs") or {}, serialized
+    ):
+        model = source.get("model_name") or source.get("model")
+        if isinstance(model, str) and model:
+            return model
+    return "unknown"
+
 
 class LangChainCallbackCapture(BaseCallbackHandler, CaptureMechanism):
+    """Capture LLM callbacks, retaining at most 1024 unfinished starts per handler.
+
+    Oldest unfinished starts are evicted; late completions still record, but
+    without the evicted prompt, model, or original start time.
+    """
+
     name = "langchain"
 
     def __init__(self) -> None:
-        self._starts: dict[UUID, tuple[list[dict], float]] = {}
+        self._starts: dict[UUID, tuple[list[dict], float, str]] = {}
+        self._starts_lock = Lock()
 
     def install(self, adapter: Any) -> bool:
         """No-op: this class IS the handler, attached via `callbacks=[...]`.
@@ -36,12 +57,19 @@ class LangChainCallbackCapture(BaseCallbackHandler, CaptureMechanism):
         self, serialized: dict, prompts: list[str], *, run_id: UUID, **kwargs: Any
     ) -> None:
         messages = [{"role": "user", "content": p} for p in prompts]
-        self._starts[run_id] = (messages, time.perf_counter())
+        start = (messages, time.perf_counter(), _model_name(serialized or {}, kwargs))
+        with self._starts_lock:
+            self._starts.pop(run_id, None)
+            if len(self._starts) >= _MAX_PENDING_RUNS:
+                self._starts.pop(next(iter(self._starts)))
+            self._starts[run_id] = start
 
     def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
-        messages, t0 = self._starts.pop(run_id, ([], time.perf_counter()))
+        with self._starts_lock:
+            start = self._starts.pop(run_id, None)
+        messages, t0, start_model = start or ([], time.perf_counter(), "unknown")
         llm_output = response.llm_output or {}
-        model = llm_output.get("model_name", "unknown")
+        model = llm_output.get("model_name") or llm_output.get("model") or start_model
         text = (
             response.generations[0][0].text
             if response.generations and response.generations[0]
@@ -69,10 +97,14 @@ class LangChainCallbackCapture(BaseCallbackHandler, CaptureMechanism):
         )
 
     def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
-        messages, t0 = self._starts.pop(run_id, ([], time.perf_counter()))
+        with self._starts_lock:
+            start = self._starts.pop(run_id, None)
+        messages, t0, model = start or ([], time.perf_counter(), "unknown")
+        if model == "unknown":
+            model = _model_name({}, kwargs)
         record_call(
             provider="langchain",
-            model="unknown",
+            model=model,
             messages=messages,
             output_text="",
             reasoning_text="",

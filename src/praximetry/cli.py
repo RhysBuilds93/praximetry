@@ -56,6 +56,17 @@ def eval_cmd(
         "(default: the hosted project/stage config, or 0.9 "
         "for plain --stage runs)",
     ),
+    fail_on_regression: bool = typer.Option(
+        False,
+        "--fail-on-regression",
+        help="Exit 1 if any example regressed against the hosted baseline, even if quality passes. "
+        "With no overlapping scored examples, only the current quality threshold applies.",
+    ),
+    branch: str = typer.Option(None, "--branch", help="Override the detected git branch"),
+    commit: str = typer.Option(None, "--commit", help="Override the detected git commit"),
+    default_branch: str = typer.Option(
+        None, "--default-branch", help="Override the detected repository default branch"
+    ),
     config: str = typer.Option(
         None,
         "--config",
@@ -75,8 +86,9 @@ def eval_cmd(
     stage code in *this* process just far enough to capture the request shape
     it would send to an LLM (no real LLM call happens here), then pushes those
     shapes to the cloud, which makes the real call and scores the result.
-    Exit 0 = passed, 1 = below --fail-under, 2 = the gate could not run (no
-    key, empty corpus, nothing capturable, or the API call failed).
+    Exit 0 = passed, 1 = below --fail-under or a regression with
+    --fail-on-regression, 2 = the gate could not run (no key, empty corpus,
+    nothing capturable, or the API call failed).
 
     With no --stage/--project/--config, runs the default saved from the
     dashboard ("Save as default"); exits 2 if no default has been saved.
@@ -91,6 +103,14 @@ def eval_cmd(
     unset (server default). The hosted tier needs a project; a bare --stage
     run has no addressable hosted config, same as --fail-under.
 
+    Git provenance uses explicit --branch/--commit/--default-branch overrides,
+    then GitHub Actions metadata, then the local checkout. Unknown fields are
+    omitted. Regression summaries and warnings are always shown when available;
+    --fail-on-regression gates on any regressed example across all evaluated
+    stages. Without a baseline it reports "no baseline" and only gates quality.
+    With no overlapping scored examples, comparison metrics are n/a and only
+    the current quality threshold applies, even with --fail-on-regression.
+
     Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (auto-discovered in Databricks, else required).
     """
     import json
@@ -100,6 +120,7 @@ def eval_cmd(
 
     from .console import console
     from .eval import CaptureError, capture_request
+    from .eval.git_info import detect_git_info
     from .eval.hosted import EXIT_GATE_FAILED, EXIT_OK, EXIT_UNUSABLE, CloudError, client_from_env
 
     cfg: dict = {}
@@ -107,10 +128,16 @@ def eval_cmd(
         try:
             cfg = json.loads(Path(config).read_text())
         except OSError as e:
-            typer.echo(f"error: could not read --config {config}: {e}")
+            console.print(
+                f"[danger]error:[/danger] {escape(f'could not read --config {config}: {e}')}",
+                soft_wrap=True,
+            )
             raise typer.Exit(EXIT_UNUSABLE) from e
         except json.JSONDecodeError as e:
-            typer.echo(f"error: --config {config} is not valid JSON: {e}")
+            console.print(
+                f"[danger]error:[/danger] {escape(f'--config {config} is not valid JSON: {e}')}",
+                soft_wrap=True,
+            )
             raise typer.Exit(EXIT_UNUSABLE) from e
         stage = stage if stage is not None else cfg.get("stage")
         project = project if project is not None else cfg.get("project")
@@ -156,6 +183,7 @@ def eval_cmd(
             raise typer.Exit(EXIT_UNUSABLE) from e
 
     try:
+        git_info = detect_git_info(branch=branch, commit=commit, default_branch=default_branch)
         _import_module(module)
         dataset = client.fetch_corpus(stage=stage, project=project)
         scope = (
@@ -207,14 +235,57 @@ def eval_cmd(
             scorers = None
 
         push_results: dict[str, dict] = {}
+        regressed_count = 0
         for stage_name, caps in captures_by_stage.items():
             push_results[stage_name] = client.push_captures(
-                stage_name, caps, experiment_id=experiment_id, scorers=scorers
+                stage_name, caps, experiment_id=experiment_id, scorers=scorers, **git_info
             )
             if project and not stage and push_results[stage_name].get("skipped"):
                 console.print(
                     f"skipped (no matching golden example) in {stage_name}: "
                     f"{', '.join(push_results[stage_name]['skipped'])}",
+                    markup=False,
+                    soft_wrap=True,
+                )
+            stage_result = push_results[stage_name]
+            if stage_result.get("unscored"):
+                console.print(
+                    f"unscored in {stage_name}: {stage_result['unscored']}",
+                    markup=False,
+                    soft_wrap=True,
+                )
+            regression = stage_result.get("regression")
+            if regression is None:
+                if fail_on_regression:
+                    console.print(
+                        f"regression {stage_name}: no baseline", markup=False, soft_wrap=True
+                    )
+                continue
+            regressed = regression["regressed"]
+            comparison_quality = "->".join(
+                "n/a" if value is None else f"{value:.3f}"
+                for value in (regression["baseline_quality"], regression["quality"])
+            )
+            delta = regression["aggregate_delta"]
+            delta_text = "n/a" if delta is None else f"{delta:+.3f}"
+            console.print(
+                f"regression {stage_name}: baseline={regression['baseline']['experiment_id']} "
+                f"overlap={regression['overlap']} "
+                f"added={len(regression['added'])} removed={len(regression['removed'])} "
+                f"quality={comparison_quality} "
+                f"delta={delta_text} regressed={len(regressed)}",
+                markup=False,
+                soft_wrap=True,
+            )
+            if regressed:
+                regressed_count += len(regressed)
+                details = ", ".join(
+                    f"{example['example_id']} "
+                    f"({example['baseline_score']:.3f} -> {example['score']:.3f})"
+                    for example in regressed
+                )
+                console.print(
+                    f"WARNING: {stage_name}: {len(regressed)} example(s) regressed: {details}",
                     markup=False,
                     soft_wrap=True,
                 )
@@ -282,6 +353,13 @@ def eval_cmd(
     if quality < fail_under:
         console.print(
             f"[danger]FAIL[/danger]: quality {quality:.3f} < --fail-under {fail_under:.3f}",
+            soft_wrap=True,
+        )
+        raise typer.Exit(EXIT_GATE_FAILED)
+    if fail_on_regression and regressed_count:
+        console.print(
+            f"[danger]FAIL[/danger]: {regressed_count} example(s) regressed "
+            "(--fail-on-regression)",
             soft_wrap=True,
         )
         raise typer.Exit(EXIT_GATE_FAILED)

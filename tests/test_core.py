@@ -1,9 +1,11 @@
 """Core: pricing, store, decorators, recording."""
 
 import asyncio
-import sqlite3
+import inspect
 import logging
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from threading import Barrier
 
 import pytest
@@ -141,6 +143,83 @@ def test_bare_stage_decorator():
 
     assert "summarize" in STAGE_REGISTRY
     assert summarize("hello") == "hel"
+
+
+@pytest.mark.parametrize("kind", ["sync", "async", "generator", "async_generator"])
+@pytest.mark.parametrize("different_attribute", ["__module__", "__qualname__"])
+def test_stage_name_collisions_warn_but_keep_the_new_callable(caplog, kind, different_attribute):
+    def original():
+        return "original"
+
+    def sync():
+        return "replacement"
+
+    async def async_():
+        return "replacement"
+
+    def generator():
+        yield "replacement"
+
+    async def async_generator():
+        yield "replacement"
+
+    replacement = {
+        "sync": sync, "async": async_, "generator": generator, "async_generator": async_generator
+    }[kind]
+    original.__module__ = replacement.__module__ = "same_module"
+    original.__qualname__ = replacement.__qualname__ = "run"
+    setattr(replacement, different_attribute, "different_origin")
+    praximetry.stage("collision")(original)
+    with caplog.at_level(logging.WARNING, logger="praximetry.instrument.decorators"):
+        praximetry.stage("collision")(replacement)
+
+    assert len(caplog.records) == 1
+    assert "collision" in caplog.text
+    assert "different_origin" in caplog.text
+    assert "same_module.run" in caplog.text
+    result = STAGE_REGISTRY["collision"]()
+    if inspect.isasyncgen(result):
+        async def consume():
+            return [item async for item in result]
+        assert asyncio.run(consume()) == ["replacement"]
+    elif inspect.isawaitable(result):
+        assert asyncio.run(result) == "replacement"
+    elif inspect.isgenerator(result):
+        assert list(result) == ["replacement"]
+    else:
+        assert result == "replacement"
+
+
+def test_stage_reregistration_from_the_same_module_and_qualname_does_not_warn(caplog):
+    def make_run(value):
+        def run():
+            return value
+        return run
+
+    praximetry.stage("reloadable")(make_run("before reload"))
+    with caplog.at_level(logging.WARNING, logger="praximetry.instrument.decorators"):
+        praximetry.stage("reloadable")(make_run("after reload"))
+    assert caplog.records == []
+    assert STAGE_REGISTRY["reloadable"]() == "after reload"
+
+
+@pytest.mark.parametrize("empty_name", [False, True])
+@pytest.mark.parametrize("callable_kind", ["partial", "instance"])
+def test_stage_uses_the_callable_type_name_without_a_function_name(empty_name, callable_kind):
+    def execute():
+        record_call(provider="fake")
+        return "result"
+
+    class CallableStage:
+        def __call__(self):
+            return execute()
+
+    fn = partial(execute) if callable_kind == "partial" else CallableStage()
+    expected = "partial" if callable_kind == "partial" else "CallableStage"
+    wrapped = praximetry.stage("")(fn) if empty_name else praximetry.stage(fn)
+    assert wrapped() == "result"
+    assert STAGE_REGISTRY[expected]() == "result"
+    assert {call.stage for call in get_store().calls()} == {expected}
 
 
 def test_store_totals_and_summary():
