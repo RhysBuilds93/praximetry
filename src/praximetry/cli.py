@@ -40,6 +40,21 @@ def _import_module(module: str | None) -> None:
         importlib.import_module(module)
 
 
+def _quality_interval(result: dict, *, aggregate: bool = False) -> str:
+    """Render server-computed uncertainty without affecting the quality gate."""
+    prefix = "aggregate_ci" if aggregate else "quality_ci"
+    low, high = result.get(f"{prefix}_low"), result.get(f"{prefix}_high")
+    if low is None or high is None:
+        return ""
+    text = f" 95% CI [{low:.3f}, {high:.3f}]"
+    n = result.get(f"{prefix}_n")
+    if n is not None:
+        text += f" (n={n} examples)"
+    if result.get(f"{prefix}_small_corpus"):
+        text += " WARNING: small corpus; uncertainty estimate is unreliable"
+    return text
+
+
 @app.command("eval")
 def eval_cmd(
     stage: str = typer.Option(None, "--stage", help="Stage whose hosted corpus to evaluate"),
@@ -295,14 +310,19 @@ def eval_cmd(
             for stage_name, stage_result in results["stages"].items():
                 console.print(
                     f"  {stage_name}: quality={stage_result['quality']:.2f} "
-                    f"examples={stage_result['count']}",
+                    f"examples={stage_result['count']}"
+                    + _quality_interval(stage_result),
                     markup=False,
                     soft_wrap=True,
                 )
             quality = results["aggregate_quality"]
             if fail_under is None:
                 fail_under = client.fetch_eval_config(project=project)["fail_under"]
-            console.print(f"aggregate quality={quality:.2f}", soft_wrap=True)
+            console.print(
+                f"aggregate quality={quality:.2f}" + _quality_interval(results, aggregate=True),
+                markup=False,
+                soft_wrap=True,
+            )
         else:
             if stage in push_results:
                 result = push_results[stage]
@@ -318,7 +338,8 @@ def eval_cmd(
             quality, pass_rate = result["quality"], result["pass_rate"]
             console.print(
                 f"quality={quality:.2f} pass_rate={pass_rate:.0%} cost=${result['cost_usd']:.4f} "
-                f"examples={result['count']}",
+                f"examples={result['count']}"
+                + _quality_interval(result),
                 markup=False,
                 soft_wrap=True,
             )

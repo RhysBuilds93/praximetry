@@ -148,6 +148,11 @@ regression failure, even with `--fail-on-regression`; the current run's quality
 threshold still applies.
 Nonzero server-reported `unscored` counts are printed per stage in both stage
 and project modes; this is informational and does not add another gate.
+When the hosted API supplies uncertainty, stage and project summaries also show
+the 95% bootstrap confidence interval and the number of independent scored
+examples. A `WARNING: small corpus` flags fewer than 10 scored examples in any
+stage. Intervals are informational: the quality gate always compares the point
+estimate with the threshold, never the confidence bounds.
 
 Captures include optional `git_branch`, `git_commit`, and `default_branch`
 metadata. Detection is independent for each field:
