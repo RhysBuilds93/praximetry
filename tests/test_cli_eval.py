@@ -36,6 +36,7 @@ def _stub_app(
     eval_default: dict | None = None,
     eval_scorers: dict | None = None,
     response_by_stage: dict[str, dict] | None = None,
+    aggregate_ci: dict | None = None,
 ) -> FastAPI:
     app = FastAPI()
     corpus_examples = examples if examples is not None else EXAMPLES
@@ -111,17 +112,10 @@ def _stub_app(
                 stage, {"count": 0, "quality": 0.0, "pass_rate": 0.0, "cost_usd": 0.0}
             )
             return {"stage": stage, "experiment_id": exp_id, **scored}
-        stages = {
-            name: {
-                "quality": s["quality"],
-                "pass_rate": s["pass_rate"],
-                "count": s["count"],
-                "experiment_id": exp_id,
-            }
-            for name, s in batch.items()
-        }
+        stages = {name: {**s, "experiment_id": exp_id} for name, s in batch.items()}
         agg = sum(s["quality"] for s in stages.values()) / len(stages) if stages else 0.0
-        return {"project": project, "stages": stages, "aggregate_quality": agg}
+        return {"project": project, "stages": stages, "aggregate_quality": agg,
+                **(aggregate_ci or {})}
 
     @app.get("/api/eval/config")
     def get_config(project: str, stage: str | None = None, authorization: str = Header(None)):
@@ -1067,3 +1061,34 @@ def test_eval_config_read_errors_are_actionable_and_unusable(monkeypatch, tmp_pa
     assert "error:" in result.output
     assert "[broken].json" in result.output
     assert ("could not read --config" if contents is None else "not valid JSON") in result.output
+
+
+@pytest.mark.parametrize("project_mode", [False, True])
+@pytest.mark.parametrize("quality,expected_exit", [(0.9, 0), (0.8, 1)])
+def test_eval_displays_ci_but_gates_on_point_estimate(
+    monkeypatch, fake_llm, project_mode, quality, expected_exit
+):
+    import praximetry.eval.hosted as hosted_mod
+
+    ci = {"quality_ci_low": 0.1, "quality_ci_high": 1.0,
+          "quality_ci_n": 2, "quality_ci_small_corpus": True}
+    aggregate = {"aggregate_ci_low": 0.1, "aggregate_ci_high": 1.0,
+                 "aggregate_ci_n": 2, "aggregate_ci_small_corpus": True}
+    http = TestClient(_stub_app(
+        {"e1": quality, "e2": quality},
+        response_by_stage={"plan_action": ci}, aggregate_ci=aggregate,
+    ))
+    monkeypatch.setenv("PRAXIMETRY_API_KEY", VALID_KEY)
+    monkeypatch.setattr(hosted_mod, "client_from_env",
+                        lambda client=None: hosted_mod.CloudClient("", VALID_KEY, client=http))
+
+    @praximetry.stage("plan_action")
+    def plan_action(text):
+        return fake_llm.chat("gpt-4o", [{"role": "user", "content": text}], expected_key=text)
+
+    scope = ["--project", "proj"] if project_mode else ["--stage", "plan_action"]
+    result = runner.invoke(cli_app, ["eval", *scope, "--fail-under", "0.9"])
+    assert result.exit_code == expected_exit, result.output
+    assert "95% CI [0.100, 1.000]" in result.output
+    assert "n=2 examples" in result.output
+    assert "WARNING: small corpus" in result.output
