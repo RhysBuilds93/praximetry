@@ -13,7 +13,18 @@ def _source() -> str:
             if module != "praximetry" and not module.startswith("praximetry."):
                 code = frame.f_code
                 filename = code.co_filename.replace("\\", "/").rsplit("/", 1)[-1]
-                return f"{module}.{code.co_qualname}@{filename}:{frame.f_lineno}"
+                qualname = getattr(code, "co_qualname", None)
+                if qualname is None:
+                    owner = frame.f_locals.get("self")
+                    if owner is None:
+                        owner = frame.f_locals.get("cls")
+                    if isinstance(owner, type):
+                        qualname = f"{owner.__qualname__}.{code.co_name}"
+                    elif owner is not None:
+                        qualname = f"{type(owner).__qualname__}.{code.co_name}"
+                    else:
+                        qualname = code.co_name
+                return f"{module}.{qualname}@{filename}:{frame.f_lineno}"
             frame = frame.f_back
         return "unknown"
     finally:

@@ -115,11 +115,26 @@ def _anthropic_json(text="claude says hi", tin=15, tout=5):
     }
 
 
+def _anthropic_http():
+    from importlib import import_module
+    from importlib.metadata import requires
+
+    package = "httpx2" if any(
+        requirement.startswith("httpx2") for requirement in requires("anthropic") or []
+    ) else "httpx"
+    return import_module(package)
+
+
 def test_anthropic_real_client_buffered():
     from anthropic import Anthropic
 
-    transport = httpx.MockTransport(lambda req: httpx.Response(200, json=_anthropic_json()))
-    client = Anthropic(api_key="test", http_client=httpx.Client(transport=transport))
+    anthropic_httpx = _anthropic_http()
+    transport = anthropic_httpx.MockTransport(
+        lambda req: anthropic_httpx.Response(200, json=_anthropic_json())
+    )
+    client = Anthropic(
+        api_key="test", http_client=anthropic_httpx.Client(transport=transport)
+    )
     resp = client.messages.create(
         model="claude-sonnet-5",
         max_tokens=64,
@@ -139,12 +154,13 @@ def test_anthropic_real_client_async_buffered():
     import asyncio
 
     from anthropic import AsyncAnthropic
-
-    transport = httpx.MockTransport(
-        lambda req: httpx.Response(200, json=_anthropic_json("async hi"))
+    anthropic_httpx = _anthropic_http()
+    transport = anthropic_httpx.MockTransport(
+        lambda req: anthropic_httpx.Response(200, json=_anthropic_json("async hi"))
     )
-    client = AsyncAnthropic(api_key="test", http_client=httpx.AsyncClient(transport=transport))
-
+    client = AsyncAnthropic(
+        api_key="test", http_client=anthropic_httpx.AsyncClient(transport=transport)
+    )
     async def go():
         return await client.messages.create(
             model="claude-sonnet-5", max_tokens=64, messages=[{"role": "user", "content": "hi"}]
