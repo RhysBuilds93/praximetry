@@ -50,6 +50,81 @@ once even after an instrumentation retry.
 LiteLLM module calls support positional model/messages and later positional
 arguments (such as timeout), including model/prompt overrides and capture.
 
+## Decorator-free recording and replay
+
+`px.init()` automatically groups SDK calls by a derived call-site label. No
+decorator is required. Labels use source identity, model, system/instruction
+shape and request tool definitions; user input is not a durable identity.
+Unchanged supported inputs produce deterministic labels across processes.
+Code moves, prompt/tool edits, model changes or a derivation-recipe change may
+create a new label. There is no fuzzy rematching of old overrides.
+
+Use a maintained explicit name when automatic grouping is not the intended
+logical target:
+
+```python
+with px.label("summarize"):
+    response = client.chat.completions.create(
+        model="gpt-4o", messages=[{"role": "user", "content": text}]
+    )
+```
+
+The innermost `label()` or `@stage` scope wins and restores its parent on exit,
+including in async tasks. The derived label is retained separately. `label()`
+does not register a callable or impose a function signature; `@stage` remains
+the opt-in for re-running current code against golden examples.
+
+```bash
+praximetry summary
+praximetry optimize --project my-agent --label summarize
+praximetry eval --project my-agent --label summarize --fail-under 0.9
+praximetry apply --project my-agent --label summarize
+```
+
+`--label` selects historical single-shot requests in the local SQLite store;
+it never imports customer modules. It cannot be combined with `--stage` or
+`--module`. Legacy `--stage NAME -m module` fresh capture is unchanged, including
+already-registered stages used without `-m` in embedded CLI invocations.
+With no target, `optimize` selects the highest accumulated-cost local target
+with known pricing. Unknown pricing requires an explicit `--label`.
+
+**Stored-request replay does not validate current agent code**, retrieval,
+tool execution or multi-turn behavior. Eval requires each stored Call's
+`metadata["example_id"]` to match the hosted call-level golden example ID;
+it never assigns an unrelated latest request to a golden example. Manual
+recording can supply this metadata with `px.record_call(...)`. For fresh
+golden evaluation use `--stage NAME -m module`. Replay rejects failed,
+redacted/incomplete, multi-turn and telemetry-only requests. Tools are replayed
+from request definitions, not from response tool calls. Provider-shaped message
+content is preserved, not normalized across providers.
+SDK captures record `metadata["request_complete"]` from the evidence they can
+actually extract; callback integrations such as LangChain record `False`.
+Manual `px.record_call(...)` kwargs default to `True` because the caller supplies
+the complete request shape; pass `metadata={"request_complete": False}` when it
+is redacted or incomplete. Replay rejects missing/false evidence rather than
+assuming absent tool definitions mean an empty tool list.
+
+`praximetry summary` groups by the effective target (innermost explicit name,
+otherwise the derived label) and warns about scoped policies with no recorded
+target. Copy reported targets into `--label`; do not reuse a stale override.
+
+Label selection and overrides are project-scoped. `apply --label` writes
+`.praximetry/overrides.json` under `projects[project][label]`; legacy `stages`
+entries are preserved without reinterpretation or automatic migration. SDK
+calls consult exact scoped targets before mutating the request. In-flight
+overrides and policy hooks take precedence. Unknown targets send the original
+request; use `summary` and the known-label diagnostic from `apply --label` to
+identify stale names. OTel grouping is a separate identity namespace and
+remains observe/evaluate/recommend only: it cannot apply overrides.
+Scoped SDK policies support model swaps and materialized `llm_rewrite` system
+prompts. Other named hosted transforms are rejected by `apply --label` because
+the package has no local implementation. A supplied original-system SHA256
+hash guards prompt replacement; a mismatch retains the original prompt.
+
+The existing hosted client, environment variables and HTTP contracts are
+unchanged. Model execution uses the selected deployment's credentials;
+customer code continues to execute only in the customer's process.
+
 ## Stages and concurrent runs
 
 Bare `@px.stage` and `@px.stage("")` use the callable's `__name__`, or its type
@@ -101,14 +176,15 @@ record, but lack the evicted prompt/model and original latency start time.
 ## What this is (and isn't)
 
 This package is the open-source recording/observability layer: instrumentation,
-local storage, cost calculation, and the `praximetry eval` CI-gate command
-(which only captures request shapes — it never scores or judges anything
-locally). Auto-optimization and the hosted dashboard are a separate product —
-see [praximetry.io](https://praximetry.io).
+local storage, cost calculation, and `praximetry eval`/`optimize`. Fresh stage
+capture shapes requests locally; stored-request replay selects historical local
+Calls. Neither scores or judges anything locally. Auto-optimization trials and
+the hosted dashboard are a separate product — see
+[praximetry.io](https://praximetry.io).
 
 `praximetry optimize` and `praximetry apply` operate on the configured project
 (`PRAXIMETRY_PROJECT`, default `default`). Pass `--project` to target another
-project when a stage name exists in more than one.
+project when the same stage or label exists in more than one.
 
 SQLite store paths are anchored when the store is created, so later working-directory changes do
 not redirect connections opened by worker threads.
@@ -121,6 +197,9 @@ Capture initializes the supported SDK patchers and stops intercepted calls
 before the real model request. Providers or SDK entry points without a supported
 patcher cannot be safely captured; do not run those stages with live provider
 credentials.
+
+`--label` instead selects stored single-shot requests without importing a
+module; see [Decorator-free recording and replay](#decorator-free-recording-and-replay).
 
 Set `PRAXIMETRY_API_KEY` to a dashboard-issued API key and
 `PRAXIMETRY_API_URL` to the hosted API's HTTPS URL (or let Databricks discover
