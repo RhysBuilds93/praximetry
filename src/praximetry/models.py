@@ -25,9 +25,12 @@ class Call(BaseModel):
     run_id: str
     parent_call_id: str | None = None
     stage: str | None = None
+    derived_label: str | None = None
+    target: str | None = None
     provider: str = "unknown"
     model: str = "unknown"
     messages: list[dict[str, Any]] = Field(default_factory=list)
+    tools: list[dict[str, Any]] = Field(default_factory=list)
     output_text: str = ""
     reasoning_text: str = ""
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)

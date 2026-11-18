@@ -37,9 +37,12 @@ _TABLES: dict[str, list[tuple[str, str]]] = {
         ("run_id", "TEXT"),
         ("parent_call_id", "TEXT"),
         ("stage", "TEXT"),
+        ("derived_label", "TEXT"),
+        ("target", "TEXT"),
         ("provider", "TEXT"),
         ("model", "TEXT"),
         ("messages", "TEXT"),
+        ("tools", "TEXT"),
         ("output_text", "TEXT"),
         ("reasoning_text", "TEXT"),
         ("tool_calls", "TEXT"),
@@ -260,9 +263,12 @@ class Store:
                     call.run_id,
                     call.parent_call_id,
                     call.stage,
+                    call.derived_label,
+                    call.target,
                     call.provider,
                     call.model,
                     json.dumps(call.messages, default=_json_default),
+                    json.dumps(call.tools, default=_json_default),
                     call.output_text,
                     call.reasoning_text,
                     json.dumps(call.tool_calls, default=_json_default),
@@ -366,34 +372,34 @@ class Store:
     @staticmethod
     def _row_to_call(r: sqlite3.Row) -> Call:
         d = _present(r, "calls")
-        for col in ("messages", "tool_calls", "content_parts", "metadata", "structured_output"):
+        for col in ("messages", "tools", "tool_calls", "content_parts", "metadata", "structured_output"):
             if col in d:
                 d[col] = json.loads(d[col]) if d[col] else None
         d = {k: v for k, v in d.items() if v is not None}
         return Call(**d)
 
-    def stage_summary(self) -> list[dict[str, Any]]:
-        rows = (
-            self._conn()
-            .execute(
-                """SELECT stage, model, COUNT(*) n, SUM(input_tokens) tin,
-                      SUM(output_tokens) tout, SUM(cost_usd) cost, AVG(latency_ms) lat
-               FROM calls GROUP BY stage, model ORDER BY cost DESC"""
-            )
-            .fetchall()
-        )
+    def stage_summary(self, project: str | None = None) -> list[dict[str, Any]]:
+        q = """SELECT COALESCE(calls.target, calls.stage, calls.derived_label) stage,
+                     calls.model, COUNT(*) n, SUM(input_tokens) tin,
+                     SUM(output_tokens) tout, SUM(cost_usd) cost, AVG(latency_ms) lat
+              FROM calls"""
+        args: list[Any] = []
+        if project:
+            q += " JOIN runs ON calls.run_id = runs.id WHERE runs.project=?"
+            args.append(project)
+        q += " GROUP BY COALESCE(calls.target, calls.stage, calls.derived_label), calls.model ORDER BY cost DESC"
+        rows = self._conn().execute(q, args).fetchall()
         return [dict(r) for r in rows]
 
-    def totals(self) -> dict[str, Any]:
-        r = (
-            self._conn()
-            .execute(
-                """SELECT COUNT(*) n, COALESCE(SUM(input_tokens),0) tin,
-                      COALESCE(SUM(output_tokens),0) tout,
-                      COALESCE(SUM(cost_usd),0) cost FROM calls"""
-            )
-            .fetchone()
-        )
+    def totals(self, project: str | None = None) -> dict[str, Any]:
+        q = """SELECT COUNT(*) n, COALESCE(SUM(input_tokens),0) tin,
+                     COALESCE(SUM(output_tokens),0) tout,
+                     COALESCE(SUM(cost_usd),0) cost FROM calls"""
+        args: list[Any] = []
+        if project:
+            q += " JOIN runs ON calls.run_id = runs.id WHERE runs.project=?"
+            args.append(project)
+        r = self._conn().execute(q, args).fetchone()
         return dict(r)
 
     def cost_over_time(self, bucket_seconds: int = 3600) -> list[dict[str, Any]]:
