@@ -15,7 +15,9 @@ from collections.abc import Callable
 
 from .. import pricing
 from .._hooks import Hook
-from ..runtime import get_overrides, record_call
+from ..runtime import current_stage, effective_stage, get_overrides, policy_hook, record_call
+from ..labeling import derive_label
+from ..overrides import apply_prompt_override, load_override, validate_override
 from .output import NormalizedOutput
 from .providers import PROVIDERS, ProviderSpec
 from .wrap import AsyncStreamWrapper, SyncStreamWrapper
@@ -74,8 +76,19 @@ def auto_instrument() -> list[str]:
     return done
 
 
-def _apply_overrides(kwargs: dict[str, Any], messages_key: str) -> dict[str, Any]:
+def _apply_overrides(kwargs: dict[str, Any], messages_key: str, target: str | None = None) -> dict[str, Any]:
     ov = get_overrides()
+    if ov is None and policy_hook.fn is None and target is not None:
+        try:
+            ov = load_override(target)
+            if ov is not None:
+                validate_override(ov)
+                updated = dict(kwargs)
+                apply_prompt_override(updated, messages_key, ov)
+                kwargs = updated
+        except Exception:
+            logger.warning("praximetry: could not apply stored override for %s", target, exc_info=True)
+            return kwargs
     if not ov:
         return kwargs
     if ov.get("model"):
@@ -94,12 +107,21 @@ def _apply_overrides(kwargs: dict[str, Any], messages_key: str) -> dict[str, Any
 
 
 def _record(
-    provider: str, model: str, messages: list, out: NormalizedOutput, t0: float, error: str | None
+    provider: str,
+    model: str,
+    messages: list,
+    out: NormalizedOutput,
+    t0: float,
+    error: str | None,
+    attribution: dict[str, Any] | None = None,
 ) -> None:
     metadata = {"unpriced_model": True} if pricing.is_unpriced(model) else {}
+    attribution = dict(attribution or {})
+    metadata.update(attribution.pop("metadata", {}))
     try:
         record_call(
             provider=provider,
+            **(attribution or {}),
             model=model,
             messages=messages,
             output_text=out.output_text,
@@ -119,11 +141,13 @@ def _record(
 
 
 
-def _make_stream_done(provider: str, model: str, messages: list, adapter, t0: float):
+def _make_stream_done(
+    provider: str, model: str, messages: list, adapter, t0: float, attribution=None
+):
     def on_done(state: dict[str, Any]) -> None:
         state["model"] = model
         out = adapter.finalize_stream(state)
-        _record(provider, model, messages, out, t0, state.get("error"))
+        _record(provider, model, messages, out, t0, state.get("error"), attribution)
 
     return on_done
 
@@ -144,19 +168,78 @@ def _prepare_call(
         kwargs = dict(kwargs)
         for index, key in positional.items():
             kwargs[key] = args[index]
-    kwargs = _apply_overrides(kwargs, messages_key)
+    value = kwargs.get(messages_key)
+    if value is not None and hasattr(value, "__next__"):
+        kwargs[messages_key] = list(value)
+    config = kwargs.get("config") if provider == "gemini" else None
+    if config is not None and callable(getattr(config, "model_dump", None)):
+        config = config.model_dump(exclude_none=True)
+    config_supported = config is None or isinstance(config, dict)
+    raw_tools = config.get("tools", []) if isinstance(config, dict) else kwargs.get("tools", [])
+    tools = []
+    tools_complete = config_supported
+    if raw_tools is not None:
+        if not isinstance(raw_tools, (list, tuple)):
+            tools_complete = False
+        else:
+            for tool in raw_tools:
+                if callable(getattr(tool, "model_dump", None)):
+                    tool = tool.model_dump(exclude_none=True)
+                if isinstance(tool, dict):
+                    tools.append(tool)
+                else:
+                    tools_complete = False
+    try:
+        original_messages = adapter.get_messages(kwargs)
+        request_complete = tools_complete
+    except Exception:
+        original_messages = []
+        request_complete = False
+    if provider == "gemini":
+        request_complete = request_complete and isinstance(kwargs.get("contents"), str)
+        if isinstance(config, dict) and isinstance(config.get("system_instruction"), str):
+            if not any(m.get("role") == "system" for m in original_messages):
+                original_messages.insert(0, {"role": "system", "content": config["system_instruction"]})
+        elif isinstance(config, dict) and config.get("system_instruction") is not None:
+            request_complete = False
+    identity_messages = original_messages
+    if isinstance(kwargs.get("system"), str):
+        identity_messages = [
+            {"role": "system", "content": kwargs["system"]},
+            *original_messages,
+        ]
+    derived = derive_label(
+        identity_messages, tools, kwargs.get("model", "unknown")
+    )
+    stage = current_stage() or derived
+    target = effective_stage() or derived
+    kwargs = _apply_overrides(kwargs, messages_key, target)
     model = kwargs.get("model", "unknown")
     try:
         messages = adapter.get_messages(kwargs)
+        if provider == "gemini":
+            outbound_config = kwargs.get("config")
+            if isinstance(outbound_config, dict):
+                instruction = outbound_config.get("system_instruction")
+                if isinstance(instruction, str) and not any(m.get("role") == "system" for m in messages):
+                    messages.insert(0, {"role": "system", "content": instruction})
     except Exception:  # unrecognised kwargs shape: still make the call, just unrecorded
         logger.warning("praximetry: could not read %s messages", provider, exc_info=True)
         messages = []
+        request_complete = False
+    attribution = {
+        "derived_label": derived,
+        "stage": stage,
+        "target": target,
+        "tools": tools,
+        "metadata": {"request_complete": request_complete},
+    }
     capture_payload = (
         {
             "provider": provider,
             "model": model,
             "messages": messages,
-            "tools": kwargs.get("tools", []),
+            "tools": tools,
         }
         if capture_hook.fn is not None
         else None
@@ -166,16 +249,18 @@ def _prepare_call(
             kwargs.pop(positional[index]) if index in positional else value
             for index, value in enumerate(args)
         )
-    return args, kwargs, model, messages, capture_payload
+    return args, kwargs, model, messages, capture_payload, attribution
 
 
-def _finish_call(provider: str, model: str, messages: list, adapter, resp: Any, t0: float) -> Any:
+def _finish_call(
+    provider: str, model: str, messages: list, adapter, resp: Any, t0: float, attribution=None
+) -> Any:
     try:
         out = adapter.parse_response(_unwrap_for_parsing(resp), model)
     except Exception:  # the response is already paid for; hand it back untouched
         logger.warning("praximetry: could not parse %s response", provider, exc_info=True)
         return resp
-    _record(provider, model, messages, out, t0, None)
+    _record(provider, model, messages, out, t0, None, attribution)
     return resp
 
 
@@ -193,7 +278,7 @@ def _instrument(
     if is_async:
 
         async def acreate(self: Any, *args: Any, **kwargs: Any) -> Any:
-            args, kwargs, model, messages, capture_payload = _prepare_call(
+            args, kwargs, model, messages, capture_payload, attribution = _prepare_call(
                 args, kwargs, messages_key, provider, adapter, self_less
             )
             if capture_payload is not None:
@@ -205,27 +290,27 @@ def _instrument(
                 try:
                     resp = await original(self, *args, **kwargs)
                 except Exception as e:
-                    _record(provider, model, messages, NormalizedOutput(), t0, str(e))
+                    _record(provider, model, messages, NormalizedOutput(), t0, str(e), attribution)
                     raise
                 return AsyncStreamWrapper(
                     resp,
                     adapter.accumulate,
-                    _make_stream_done(provider, model, messages, adapter, t0),
+                    _make_stream_done(provider, model, messages, adapter, t0, attribution),
                 )
 
 
             try:
                 resp = await original(self, *args, **kwargs)
             except Exception as e:
-                _record(provider, model, messages, NormalizedOutput(), t0, str(e))
+                _record(provider, model, messages, NormalizedOutput(), t0, str(e), attribution)
                 raise
-            return _finish_call(provider, model, messages, adapter, resp, t0)
+            return _finish_call(provider, model, messages, adapter, resp, t0, attribution)
 
         acreate._praximetry_patched = True  # type: ignore[attr-defined]
         return acreate
 
     def create(self: Any, *args: Any, **kwargs: Any) -> Any:
-        args, kwargs, model, messages, capture_payload = _prepare_call(
+        args, kwargs, model, messages, capture_payload, attribution = _prepare_call(
             args, kwargs, messages_key, provider, adapter, self_less
         )
         if capture_payload is not None:
@@ -237,19 +322,19 @@ def _instrument(
             try:
                 resp = original(self, *args, **kwargs)
             except Exception as e:
-                _record(provider, model, messages, NormalizedOutput(), t0, str(e))
+                _record(provider, model, messages, NormalizedOutput(), t0, str(e), attribution)
                 raise
             return SyncStreamWrapper(
-                resp, adapter.accumulate, _make_stream_done(provider, model, messages, adapter, t0)
+                resp, adapter.accumulate, _make_stream_done(provider, model, messages, adapter, t0, attribution)
             )
 
 
         try:
             resp = original(self, *args, **kwargs)
         except Exception as e:
-            _record(provider, model, messages, NormalizedOutput(), t0, str(e))
+            _record(provider, model, messages, NormalizedOutput(), t0, str(e), attribution)
             raise
-        return _finish_call(provider, model, messages, adapter, resp, t0)
+        return _finish_call(provider, model, messages, adapter, resp, t0, attribution)
 
     create._praximetry_patched = True  # type: ignore[attr-defined]
     return create
