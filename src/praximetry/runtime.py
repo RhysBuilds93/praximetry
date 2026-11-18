@@ -15,6 +15,7 @@ from weakref import WeakValueDictionary
 from . import cloud_sync
 from ._hooks import Hook
 from .config import get_config
+from .labeling import derive_label
 from .models import Call, Run
 from .store import Store, get_store
 
@@ -102,6 +103,17 @@ def current_run(create: bool = True) -> Run | None:
 def current_stage() -> str | None:
     stack = _stage_stack.get()
     return ">".join(stack) if stack else None
+
+
+def effective_stage() -> str | None:
+    """Return the innermost explicit label (current_stage retains ancestry)."""
+    stack = _stage_stack.get()
+    return stack[-1] if stack else None
+
+
+def label(name: str):
+    """Label calls in a scope without registering an executable stage."""
+    return stage_context(name)
 
 
 def get_overrides() -> dict[str, Any] | None:
@@ -248,12 +260,29 @@ def record_call(call: Call | None = None, **kwargs: Any) -> Call:
         return call or Call(run_id="disabled", **kwargs)
     if call is None:
         run = current_run()
-        kwargs.setdefault("stage", current_stage())
+        if not kwargs.get("derived_label"):
+            kwargs["derived_label"] = derive_label(
+                kwargs.get("messages", []),
+                kwargs.get("tools", []),
+                kwargs.get("model", "unknown"),
+            )
+        kwargs.setdefault("stage", current_stage() or kwargs["derived_label"])
+        kwargs.setdefault("target", effective_stage() or kwargs["stage"])
+        metadata = dict(kwargs.get("metadata") or {})
+        # Preserve an explicit incomplete/redacted marker from the caller.
+        metadata.setdefault("request_complete", True)
+        kwargs["metadata"] = metadata
         parent = _current_call.get()
         kwargs.setdefault("parent_call_id", parent.call_id if parent else None)
         call = Call(run_id=run.id, **kwargs)
     else:
         run = current_run(create=False)
+        if not call.derived_label:
+            call.derived_label = derive_label(call.messages, call.tools, call.model)
+        if not call.stage:
+            call.stage = current_stage() or call.derived_label
+        if not call.target:
+            call.target = effective_stage() or call.stage
     get_store().save_call(call)
     if cloud_sync.is_running():
         if run is not None:

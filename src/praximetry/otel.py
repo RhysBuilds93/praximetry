@@ -31,6 +31,8 @@ from typing import Any
 from . import pricing
 from .instrument.reasoning_patterns import split_embedded_reasoning
 from .models import Call
+from .labeling import derive_label
+from .runtime import effective_stage
 from .runtime import current_run
 
 # Attribute aliases across the common conventions (OTel GenAI semconv,
@@ -127,13 +129,47 @@ def map_span(name: str, attributes: dict[str, Any]) -> Call | None:
     tout = _int(_first(attributes, _OUT_TOKENS, 0))
     if tin == 0 and tout == 0:
         tin, tout = _mlflow_tokens(attributes)
-    # Span name is the framework's node/step name -> natural stage attribution.
-    stage = str(_first(attributes, ("gen_ai.operation.name",), name) or name)
+    operation = str(_first(attributes, ("gen_ai.operation.name",), name) or name)
+    prompt = _first(attributes, _PROMPT)
+    structured_prompt = prompt
+    if isinstance(prompt, str):
+        try:
+            structured_prompt = json.loads(prompt)
+        except ValueError:
+            structured_prompt = None
+    roles_captured = isinstance(structured_prompt, list) and all(
+        isinstance(m, dict) and isinstance(m.get("role"), str) for m in structured_prompt
+    )
+    messages = structured_prompt if roles_captured else (
+        [{"role": "prompt", "content": str(prompt)}] if prompt is not None else []
+    )
+    tool_attr_present = any(key in attributes for key in ("gen_ai.request.tools", "llm.tools"))
+    raw_tools = _first(attributes, ("gen_ai.request.tools", "llm.tools"), [])
+    if isinstance(raw_tools, str):
+        try:
+            raw_tools = json.loads(raw_tools)
+        except ValueError:
+            raw_tools = None
+    tools = (
+        raw_tools
+        if isinstance(raw_tools, list) and all(isinstance(tool, dict) for tool in raw_tools)
+        else []
+    )
+    derived = derive_label(messages, tools, model, source=f"otel:{operation}")
     run = current_run()
     output_text, reasoning_text = split_embedded_reasoning(
         str(_first(attributes, _COMPLETION, "")), model
     )
-    metadata: dict[str, Any] = {"source": "otel", "span": name}
+    metadata: dict[str, Any] = {
+        "source": "otel",
+        "span": name,
+        "request_complete": (
+            roles_captured
+            and tool_attr_present
+            and isinstance(raw_tools, list)
+            and all(isinstance(tool, dict) for tool in raw_tools)
+        ),
+    }
     mlflow_cost = _mlflow_cost(attributes)
     if mlflow_cost is not None:
         cost_usd = mlflow_cost
@@ -143,10 +179,13 @@ def map_span(name: str, attributes: dict[str, Any]) -> Call | None:
             metadata["unpriced_model"] = True
     return Call(
         run_id=run.id if run else "otel",
-        stage=stage,
+        stage=operation,
+        target=effective_stage() or derived,
+        derived_label=derived,
+        tools=tools,
         provider=provider,
         model=model,
-        messages=[{"role": "prompt", "content": str(_first(attributes, _PROMPT, ""))}],
+        messages=messages,
         output_text=output_text,
         reasoning_text=reasoning_text,
         input_tokens=tin,

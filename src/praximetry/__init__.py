@@ -23,7 +23,7 @@ from .instrument import auto_instrument, stage
 from .models import Call
 from .otel import instrument_otel, record_spans
 from .pricing import register_pricing
-from .runtime import current_run, record_call, run_context
+from .runtime import current_run, label, record_call, run_context
 from .trulens import record_trulens_record
 from .store import reset_store
 
@@ -31,6 +31,7 @@ __version__ = "0.2.0"
 __all__ = [
     "init",
     "stage",
+    "label",
     "record_call",
     "run_context",
     "current_run",

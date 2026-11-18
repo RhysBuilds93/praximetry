@@ -93,7 +93,7 @@ class LangChainCallbackCapture(BaseCallbackHandler, CaptureMechanism):
             cost_usd=pricing.cost_usd(model, tin, tout),
             latency_ms=(time.perf_counter() - t0) * 1000,
             error=None,
-            metadata={"unpriced_model": True} if pricing.is_unpriced(model) else {},
+            metadata={"request_complete": False, **({"unpriced_model": True} if pricing.is_unpriced(model) else {})},
         )
 
     def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
@@ -116,6 +116,7 @@ class LangChainCallbackCapture(BaseCallbackHandler, CaptureMechanism):
             cost_usd=0.0,
             latency_ms=(time.perf_counter() - t0) * 1000,
             error=str(error),
+            metadata={"request_complete": False},
         )
 
 
