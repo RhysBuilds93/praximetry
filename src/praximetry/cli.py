@@ -43,6 +43,7 @@ def _import_module(module: str | None) -> None:
 @app.command("eval")
 def eval_cmd(
     stage: str = typer.Option(None, "--stage", help="Stage whose hosted corpus to evaluate"),
+    label: str = typer.Option(None, "--label", help="Replay a locally recorded label; no module import"),
     project: str = typer.Option(
         None, "--project", help="Project whose hosted corpus to evaluate (every stage under it)"
     ),
@@ -89,6 +90,10 @@ def eval_cmd(
     Exit 0 = passed, 1 = below --fail-under or a regression with
     --fail-on-regression, 2 = the gate could not run (no key, empty corpus,
     nothing capturable, or the API call failed).
+
+    --label selects correlated historical single-shot requests from the local
+    Store without importing customer code. It cannot combine with --stage/-m,
+    does not validate current agent code, and omits current-checkout provenance.
 
     With no --stage/--project/--config, runs the default saved from the
     dashboard ("Save as default"); exits 2 if no default has been saved.
@@ -143,6 +148,23 @@ def eval_cmd(
         project = project if project is not None else cfg.get("project")
         module = module if module is not None else cfg.get("module")
         fail_under = fail_under if fail_under is not None else cfg.get("fail_under")
+        label = label if label is not None else cfg.get("label")
+
+    if label:
+        if stage or module:
+            console.print("error: --label cannot be combined with --stage or --module", markup=False)
+            raise typer.Exit(EXIT_UNUSABLE)
+        from .config import get_config
+
+        stage = label
+        project = project if project is not None else get_config().project
+        from .eval.replay import recorded_calls, replay_examples
+
+        try:
+            calls = recorded_calls(project, label)
+        except CaptureError as e:
+            console.print(f"error: {e}", markup=False, soft_wrap=True)
+            raise typer.Exit(EXIT_UNUSABLE) from e
 
     hosted_default_scorers: list[str] | None = None
     if not stage and not project:
@@ -183,8 +205,16 @@ def eval_cmd(
             raise typer.Exit(EXIT_UNUSABLE) from e
 
     try:
-        git_info = detect_git_info(branch=branch, commit=commit, default_branch=default_branch)
-        _import_module(module)
+        if label:
+            # Local selection was checked before constructing the hosted client.
+            git_info = {}  # Current checkout provenance would misrepresent historical requests.
+            console.print(
+                "Stored-request replay: historical single-shot requests; "
+                "this does not validate current agent code.", markup=False,
+            )
+        else:
+            git_info = detect_git_info(branch=branch, commit=commit, default_branch=default_branch)
+            _import_module(module)
         dataset = client.fetch_corpus(stage=stage, project=project)
         scope = (
             f"project '{project}'"
@@ -201,6 +231,13 @@ def eval_cmd(
         for ex in dataset.examples:
             if ex.level == "stage":
                 stage_level_skipped += 1
+                continue
+            if label:
+                try:
+                    captures_by_stage.setdefault(ex.stage, []).extend(replay_examples(calls, [ex]))
+                except CaptureError as e:
+                    console.print(f"error: {e}", markup=False, soft_wrap=True)
+                    raise typer.Exit(EXIT_UNUSABLE) from e
                 continue
             try:
                 captures_by_stage.setdefault(ex.stage, []).append(capture_request(ex))
@@ -373,8 +410,9 @@ def eval_cmd(
 @app.command()
 def optimize(
     stage: str = typer.Option(
-        ..., "--stage", help="Stage to trigger a hosted optimization run for"
+        None, "--stage", help="Stage to trigger a hosted optimization run for"
     ),
+    label: str = typer.Option(None, "--label", help="Replay a locally recorded label"),
     module: str = typer.Option(
         None, "--module", "-m", help="Python module defining your @praximetry.stage functions"
     ),
@@ -392,14 +430,14 @@ def optimize(
         None, "--project", help="Project (defaults to the configured PRAXIMETRY_PROJECT)"
     ),
 ) -> None:
-    """Trigger a hosted optimization run for `stage`.
+    """Trigger a hosted optimization run from a fresh or recorded request.
 
-    Captures one fresh request shape for `stage` from *this* process's
-    registered code (same capture step `eval` uses, no real LLM call happens
-    here) and submits it to the cloud, which runs the actual trial loop
-    (transforms, candidate models, scoring) with its own credentials. Exit 0
-    on a successful submission, non-zero if the gate couldn't run (no key,
-    API unreachable, empty corpus, nothing capturable).
+    With `--stage`, captures one fresh request shape from this process's
+    registered code and submits it for hosted trials. With `--label`, or with
+    neither selector, replays a historical single-shot request from the local
+    Store without importing a module. Bare replay ranks known-price labels by
+    accumulated cost. Hosted trials use the deployment's credentials and exit 1
+    when the gate cannot run, including an unknown label.
 
     Env: PRAXIMETRY_API_KEY (required), PRAXIMETRY_API_URL (auto-discovered in Databricks, else required).
     """
@@ -410,24 +448,35 @@ def optimize(
     from .eval import CaptureError, capture_request
     from .eval.hosted import CloudError, client_from_env
 
-    try:
-        client = client_from_env()
-        _import_module(module)
-        selected_project = project if project is not None else get_config().project
-        dataset = client.fetch_corpus(stage, project=selected_project)
-        if not dataset.examples:
-            console.print(
-                f"No golden examples for stage '{stage}' in project '{selected_project}'.",
-                markup=False,
-                soft_wrap=True,
-            )
-            raise typer.Exit(1)
+    if label and (stage or module):
+        console.print("error: --label cannot be combined with --stage or --module", markup=False)
+        raise typer.Exit(1)
 
-        try:
+    selected_project = project if project is not None else get_config().project
+    try:
+        if label or not stage:
+            if module:
+                raise CaptureError("--module requires --stage; use --label for stored-request replay")
+            from .eval.replay import optimization_request
+
+            captured = optimization_request(selected_project, label)
+            stage = captured.stage
+            console.print(
+                f"Stored-request replay: label='{stage}' in project '{selected_project}'; "
+                "this does not validate current agent code.", markup=False,
+            )
+            client = client_from_env()
+        else:
+            client = client_from_env()
+            _import_module(module)
+            dataset = client.fetch_corpus(stage, project=selected_project)
+            if not dataset.examples:
+                console.print(
+                    f"No golden examples for stage '{stage}' in project '{selected_project}'.",
+                    markup=False, soft_wrap=True,
+                )
+                raise typer.Exit(1)
             captured = capture_request(dataset.examples[0])
-        except CaptureError as e:
-            console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
-            raise typer.Exit(1) from e
 
         result = client.push_optimize_capture(
             stage,
@@ -438,7 +487,7 @@ def optimize(
             max_trials=max_trials,
             project=selected_project,
         )
-    except CloudError as e:
+    except (CloudError, CaptureError) as e:
         console.print(f"[danger]error:[/danger] {escape(str(e))}", soft_wrap=True)
         raise typer.Exit(1) from e
 
@@ -468,7 +517,8 @@ def optimize(
 
 @app.command()
 def apply(
-    stage: str = typer.Option(..., "--stage", help="Stage to apply the hosted optimize winner for"),
+    stage: str = typer.Option(None, "--stage", help="Stage to apply the hosted optimize winner for"),
+    label: str = typer.Option(None, "--label", help="Apply a winner to an exact project-scoped label"),
     project: str = typer.Option(
         None, "--project", help="Project (defaults to the configured PRAXIMETRY_PROJECT)"
     ),
@@ -492,6 +542,20 @@ def apply(
     from .console import console
     from .config import get_config
     from .eval.hosted import CloudError, client_from_env
+
+    if bool(stage) == bool(label):
+        console.print("error: choose exactly one of --stage or --label", markup=False)
+        raise typer.Exit(2)
+    if label:
+        stage = label
+        from .eval.replay import recorded_calls
+        from .eval import CaptureError
+
+        try:
+            recorded_calls(project if project is not None else get_config().project, label)
+        except CaptureError as e:
+            console.print(f"error: {e}", markup=False)
+            raise typer.Exit(2) from e
 
     try:
         client = client_from_env()
@@ -521,13 +585,26 @@ def apply(
         raise typer.Exit(0)
 
     path = Path(".praximetry") / "overrides.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    stages: dict = {}
+    document: dict = {}
     if path.exists():
         try:
-            stages = json.loads(path.read_text()).get("stages", {})
-        except (json.JSONDecodeError, OSError):
-            stages = {}
+            document = json.loads(path.read_text())
+            if not isinstance(document, dict):
+                raise ValueError("override file must be a JSON object")
+        except (ValueError, OSError) as e:
+            console.print(f"error: cannot preserve existing override file: {e}", markup=False)
+            raise typer.Exit(2) from e
+    if label:
+        from .overrides import validate_override
+
+        try:
+            validate_override(winner)
+        except ValueError as e:
+            console.print(f"error: {e}", markup=False)
+            raise typer.Exit(2) from e
+        stages = document.setdefault("projects", {}).setdefault(selected_project, {})
+    else:
+        stages = document.setdefault("stages", {})
     stages[stage] = {
         "model": winner.get("model"),
         "transforms": transforms,
@@ -537,7 +614,8 @@ def apply(
         "savings_pct": winner.get("savings_pct"),
         "applied_at": time.time(),
     }
-    path.write_text(json.dumps({"stages": stages}, indent=2))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(document, indent=2))
 
     savings = winner.get("savings_pct")
     savings_str = f" savings={savings:.0%}" if savings is not None else ""
@@ -608,17 +686,33 @@ def doctor() -> None:
 
 
 @app.command()
-def summary() -> None:
-    """Print usage totals and per-stage breakdown."""
+def summary(
+    project: str = typer.Option(
+        None, "--project", help="Project to summarize (defaults to configured PRAXIMETRY_PROJECT)"
+    ),
+) -> None:
+    """Print project usage totals and per-target breakdown."""
     from rich.markup import escape
     from rich.table import Table
 
     from .console import ACCENT, console
     from .currency import fmt as money
     from .store import get_store
+    from .config import get_config
 
+    selected_project = project if project is not None else get_config().project
     store = get_store()
-    t = store.totals()
+    t = store.totals(project=selected_project)
+    from .overrides import project_overrides
+
+    rows = store.stage_summary(project=selected_project)
+    known = {row["stage"] for row in rows}
+    stale = sorted(set(project_overrides(selected_project)) - known)
+    if stale:
+        console.print(
+            f"warning: stored overrides without a recorded target: {', '.join(stale)}",
+            markup=False, soft_wrap=True,
+        )
     console.print(
         f"calls={t['n']}  tokens_in={t['tin']}  tokens_out={t['tout']}  "
         f"cost={money(t['cost'])}\n",
@@ -632,7 +726,7 @@ def summary() -> None:
     table.add_column("in", justify="right")
     table.add_column("out", justify="right")
     table.add_column("cost", justify="right")
-    for s in store.stage_summary():
+    for s in rows:
         table.add_row(
             escape(str(s["stage"])),
             escape(str(s["model"])),
